@@ -12,7 +12,7 @@
 
 import type { Dot, DotOptions, MatrixInfo, QualityPreset, RGB } from './types';
 import { mapModuleColor, analyzeToneHealth, PRESET_TONES, REPAIR_TONES, type ToneHealth } from '@/utils/contrastOptimizer';
-import { colorBucket, cssRgb } from '@/utils/colorUtils';
+import { colorBucket, cssRgb, liftToLuminance, scaleToLuminance } from '@/utils/colorUtils';
 import { sampleModuleColors, type ProcessedImage } from './imageProcessor';
 
 export interface DotPlan {
@@ -22,6 +22,8 @@ export interface DotPlan {
   dots: Dot[]; // data modules only (function modules are rendered structurally)
   toneHealth: ToneHealth;
   moduleCount: number;
+  /** Raw per-module photo samples (N×N row-major) — drives the photo phase of the animation. */
+  photoColors: RGB[];
   /** Tone-safe copy of the detail image for fragment dots (null in DOM-less contexts). */
   fragmentSource: HTMLCanvasElement | null;
 }
@@ -125,6 +127,7 @@ export function buildDotPlanFromSamples(inputs: BuildPlanOptions & ModuleSamples
     dots: dotList,
     toneHealth,
     moduleCount: N * N,
+    photoColors: colors,
     fragmentSource,
   };
 }
@@ -144,27 +147,29 @@ const clampedDetailCache = new WeakMap<HTMLCanvasElement, Map<string, HTMLCanvas
 
 /**
  * Build a copy of the high-res detail image whose every pixel respects the
- * module's tone constraint (dark modules <= cap, light modules >= floor),
- * with colour intensity and repair desaturation applied — the per-pixel
- * equivalent of mapModuleColor, so fragment patches scan as reliably as dots.
+ * module's tone BAND — the per-pixel equivalent of mapModuleColor, so
+ * fragment patches carry the same photographic colour as the dot renderer
+ * while staying inside scan-safe luminance ranges.
  *
- * Fragment patches keep their intra-module texture, which is harder on
- * jsQR's local binarization than flat dots (a textured block drifts the
- * local threshold). Fragments therefore use a tighter band: dark patches
- * capped at min(cap, 96) and light patches floored at max(floor+8, 246).
- * Empirically calibrated — see docs/testing.md.
+ * Dark patches: proportional scale-down into [?, fragmentCap] (hue kept).
+ * Light patches: proportional scale-up to fragmentFloor (hue kept); pixels
+ * too dark to scale without hue-destroying clipping blend toward white
+ * instead. Fragment patches keep intra-module texture, which is harder on
+ * jsQR's local binarization than flat dots, so fragments use a tighter band:
+ * cap <= 96, floor >= 246. Empirically calibrated — see docs/testing-report.md.
  */
 export function buildClampedDetail(
   detail: HTMLCanvasElement,
   N: number,
   darkFlags: Array<boolean>,
-  tones: { darkCap: number; lightFloor: number },
+  tones: { darkCap: number; lightFloor: number; chromaBoost?: number },
   colorIntensity: number,
   desaturateDark: number,
 ): HTMLCanvasElement {
   const fragmentCap = Math.min(tones.darkCap, 96);
   const fragmentFloor = Math.max(tones.lightFloor + 8, 246);
-  const key = `frag${fragmentCap}|${fragmentFloor}|${colorIntensity}|${desaturateDark}`;
+  const boost = tones.chromaBoost ?? 1;
+  const key = `frag${fragmentCap}|${fragmentFloor}|${colorIntensity}|${desaturateDark}|${boost}`;
   let perCanvas = clampedDetailCache.get(detail);
   if (!perCanvas) {
     perCanvas = new Map();
@@ -202,8 +207,8 @@ export function buildClampedDetail(
       let Y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
       if (dark) {
         if (Y > fragmentCap) {
-          const k = fragmentCap / Math.max(Y, 1);
-          r *= k; g *= k; b *= k;
+          const out = scaleToLuminance({ r, g, b }, Y, fragmentCap);
+          r = out.r; g = out.g; b = out.b;
           Y = fragmentCap;
         }
         if (desaturateDark > 0) {
@@ -212,10 +217,17 @@ export function buildClampedDetail(
           b += (Y - b) * desaturateDark;
         }
       } else if (Y < fragmentFloor) {
-        const t = (fragmentFloor - Y) / Math.max(255 - Y, 0.5);
-        r += (255 - r) * t;
-        g += (255 - g) * t;
-        b += (255 - b) * t;
+        // hue-safe lift into the fragment light band
+        const out = Y < 24
+          ? (() => { const t = (fragmentFloor - Y) / Math.max(255 - Y, 0.5); return { r: r + (255 - r) * t, g: g + (255 - g) * t, b: b + (255 - b) * t }; })()
+          : liftToLuminance({ r, g, b }, Y, fragmentFloor);
+        r = out.r; g = out.g; b = out.b;
+        Y = fragmentFloor;
+        if (boost > 1) {
+          r = Y + (r - Y) * boost;
+          g = Y + (g - Y) * boost;
+          b = Y + (b - Y) * boost;
+        }
       }
 
       dd[i] = r; dd[i + 1] = g; dd[i + 2] = b; dd[i + 3] = sd[i + 3];

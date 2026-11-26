@@ -31,15 +31,16 @@ export function QualitySection({
 }: { preset: QualityPreset; onChange: (p: QualityPreset) => void }) {
   return (
     <div>
-      <SectionLabel>Quality preset</SectionLabel>
+      <SectionLabel>Quality mode</SectionLabel>
       <Segmented
         options={QUALITY_PRESETS.map((p) => ({ id: p.id, label: p.label, hint: p.hint }))}
         value={preset}
         onChange={onChange}
       />
       <p className="text-[11px] text-mute mt-2 leading-relaxed">
-        Presets choose conservative luminance bounds. Every preset is verified — if a render
-        ever fails to decode, DOTRA escalates automatically.
+        Each mode maps the photograph into scan-safe luminance bands — dark modules stay
+        dark, light modules stay bright, hue follows the photo. Every mode is verified;
+        if a render ever fails to decode, DOTRA widens the bands automatically.
       </p>
     </div>
   );

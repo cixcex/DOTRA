@@ -26,6 +26,7 @@ import { exportAnimationVideo, mp4Supported, type VideoExportResult } from '@/en
 import { exportGIF } from '@/engine/gifExporter';
 import type { FrameSource } from '@/engine/animationFrames';
 import { normalizeUrl } from '@/utils/urlValidator';
+import { MODE_ENHANCE } from '@/lib/constants';
 
 export const PREVIEW_PX = 720;
 
@@ -82,12 +83,12 @@ const INITIAL: GeneratorState = {
   geometryOverride: false,
 };
 
-// Repair ladder: tone escalation → geometry safety → desaturation → EC boost.
+// Repair ladder: band escalation → geometry safety → desaturation → EC boost.
 interface AttemptSpec { repair: number; geo: boolean; ecBoost: boolean; label: string }
 const REPAIR_LADDER: AttemptSpec[] = [
-  { repair: 0, geo: false, ecBoost: false, label: 'preset tones' },
-  { repair: 1, geo: false, ecBoost: false, label: 'stronger tone separation' },
-  { repair: 2, geo: false, ecBoost: false, label: 'tone separation + desaturation' },
+  { repair: 0, geo: false, ecBoost: false, label: 'photographic tone bands' },
+  { repair: 1, geo: false, ecBoost: false, label: 'wider band separation' },
+  { repair: 2, geo: false, ecBoost: false, label: 'band separation + desaturation' },
   { repair: 3, geo: true, ecBoost: false, label: 'full-size dots, no gaps' },
   { repair: 4, geo: true, ecBoost: true, label: 'maximum redundancy (EC H)' },
 ];
@@ -173,7 +174,12 @@ export function useQRGenerator() {
     setPartial({ phase: 'analyzing' });
     let processed: ProcessedImage;
     try {
-      processed = processImage(args.sourceImg, args.crop, matrix.size, args.adjustments);
+      processed = processImage(args.sourceImg, {
+        crop: args.crop,
+        matrixSize: matrix.size,
+        adjustments: args.adjustments,
+        enhance: MODE_ENHANCE[args.preset],
+      });
     } catch {
       setPartial({ phase: 'failed', status: 'failed', failureReason: 'Could not process that image.' });
       return;
@@ -282,7 +288,7 @@ export function useQRGenerator() {
 
   const exportPNG = useCallback(async (px: number): Promise<PNGExportOutcome> => {
     const canvas = await exportVerifiedCanvas(px);
-    if (!canvas) return { ok: false, reason: 'This resolution did not verify. Try the Maximum scan reliability preset.' };
+    if (!canvas) return { ok: false, reason: 'This resolution did not verify. Try the Scan mode preset.' };
     const blob = await canvasToPngBlob(canvas);
     downloadBlob(blob, `${safeFilename(stateRef.current.url || 'dotra-qr')}-${px}px.png`);
     return { ok: true, blob };
@@ -295,7 +301,7 @@ export function useQRGenerator() {
 
     const px = 1080;
     const canvas = await exportVerifiedCanvas(px);
-    if (!canvas) return { ok: false, reason: 'The 1080p render did not verify. Try the Maximum scan reliability preset.' };
+    if (!canvas) return { ok: false, reason: 'The 1080p render did not verify. Try the Scan mode preset.' };
 
     const scene = createScene(s.plan, s.matrix, px, args.qr.quietZone, args.anim);
     const src: FrameSource = {
@@ -310,6 +316,7 @@ export function useQRGenerator() {
       dotSize: s.geometryOverride ? 1 : args.dots.size,
       spacing: s.geometryOverride ? 0 : args.dots.spacing,
       fragmentSource: s.plan.fragmentSource,
+      photoSource: s.processed?.detail ?? null,
       fps: 30,
       holdSeconds: 1.2,
     };
@@ -339,6 +346,7 @@ export function useQRGenerator() {
       dotSize: s.geometryOverride ? 1 : args.dots.size,
       spacing: s.geometryOverride ? 0 : args.dots.spacing,
       fragmentSource: s.plan.fragmentSource,
+      photoSource: s.processed?.detail ?? null,
       fps: 12,
       holdSeconds: 1.2,
     };

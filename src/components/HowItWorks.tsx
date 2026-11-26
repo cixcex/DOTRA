@@ -102,7 +102,7 @@ export function HowItWorks() {
               ))}
             </ol>
             <p className="text-[11px] text-paper/50 mt-3 leading-relaxed">
-              Step 1 is the chosen quality preset. The encoded URL never changes during repair.
+              Step 1 is the chosen quality mode. The encoded URL never changes during repair.
             </p>
           </div>
         </motion.div>

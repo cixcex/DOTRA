@@ -17,6 +17,8 @@ export interface AnimationDriverArgs {
   plan: DotPlan | null;
   matrix: MatrixInfo | null;
   renderOpts: Omit<RenderOptions, 'fragmentSource'> & { fragmentSource?: HTMLCanvasElement | null };
+  /** Smoothed source photograph for the opening photo phase. */
+  photoSource?: HTMLCanvasElement | null;
   easing: EasingStyle;
   playing: boolean;
   /** Bump to restart the timeline from 0. */
@@ -109,6 +111,7 @@ function makeDrawOpts(s: AnimationDriverArgs) {
   return {
     shape: s.renderOpts.shape,
     fragmentSource: s.renderOpts.fragmentSource ?? null,
+    photoSource: s.photoSource ?? null,
     plan: s.plan!,
     matrix: s.matrix!,
     quietZone: s.renderOpts.quietZone,

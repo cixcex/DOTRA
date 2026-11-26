@@ -21,6 +21,8 @@ export interface FrameSource {
   dotSize: number;
   spacing: number;
   fragmentSource: HTMLCanvasElement | null;
+  /** Smoothed source photograph for the opening photo phase of the animation. */
+  photoSource?: HTMLCanvasElement | null;
   fps: number;
   holdSeconds: number;
 }
@@ -40,6 +42,7 @@ export function renderAnimationFrame(canvas: HTMLCanvasElement, src: FrameSource
   const drawOpts = {
     shape: src.shape,
     fragmentSource: src.fragmentSource,
+    photoSource: src.photoSource ?? null,
     plan: src.plan,
     matrix: src.matrix,
     quietZone: src.quietZone,

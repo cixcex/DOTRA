@@ -10,10 +10,17 @@ import type {
 import type { ParticleControls } from '@/engine/particleEngine';
 
 export const QUALITY_PRESETS: { id: QualityPreset; label: string; hint: string }[] = [
-  { id: 'resemblance', label: 'Maximum resemblance', hint: 'Photographic colour, darkest tones' },
-  { id: 'balanced', label: 'Balanced', hint: 'Colour with a safety margin' },
-  { id: 'reliability', label: 'Maximum scan reliability', hint: 'High contrast, conservative tones' },
+  { id: 'photo', label: 'Photo', hint: 'Widest tone bands — maximum photographic detail' },
+  { id: 'balanced', label: 'Balanced', hint: 'Photographic colour with a scan-safety margin' },
+  { id: 'scan', label: 'Scan', hint: 'Narrow bands — maximum decoder margin' },
 ];
+
+/** Photographic preprocessing applied per quality mode. */
+export const MODE_ENHANCE: Record<QualityPreset, { smartCrop: boolean; autoContrast: boolean; clahe: boolean; sharpen: boolean }> = {
+  photo: { smartCrop: true, autoContrast: true, clahe: true, sharpen: true },
+  balanced: { smartCrop: true, autoContrast: true, clahe: true, sharpen: true },
+  scan: { smartCrop: true, autoContrast: true, clahe: false, sharpen: false },
+};
 
 export const DOT_SHAPES: { id: DotShape; label: string; hint: string }[] = [
   { id: 'circle', label: 'Circle', hint: 'Classic DOTRA dot' },
@@ -42,7 +49,7 @@ export const VERSION_BUCKETS: { id: TargetVersion; label: string; hint: string }
   { id: 'auto', label: 'Auto', hint: 'Smallest matrix that fits the link' },
   { id: 'small', label: 'Small', hint: '≈ v4 · 33×33 modules · bold dots' },
   { id: 'medium', label: 'Medium', hint: '≈ v8 · 49×49 modules · ~2.4k dots' },
-  { id: 'large', label: 'Large', hint: '≈ v14 · 73×73 modules · ~5.3k dots' },
+  { id: 'large', label: 'Large', hint: '≈ v14 · 73×73 modules · ~5.3k dots — best photographic detail' },
 ];
 
 export const EASINGS: { id: EasingStyle; label: string }[] = [
@@ -59,7 +66,7 @@ export const ANIM_BACKGROUNDS: { id: AnimationBackground; label: string; css: st
   { id: 'transparent', label: 'Transparent', css: 'transparent' },
 ];
 
-export const DEFAULT_DOTS: DotOptions = { shape: 'circle', size: 0.8, spacing: 0.12, density: 1, colorIntensity: 1 };
+export const DEFAULT_DOTS: DotOptions = { shape: 'circle', size: 0.78, spacing: 0.13, density: 1, colorIntensity: 1 };
 export const DEFAULT_QR: QROptions = { ecLevel: 'M', quietZone: 4, targetVersion: 'auto', bgColor: '#ffffff', transparentBackground: false };
 export const DEFAULT_ADJ: ImageAdjustments = { brightness: 0, contrast: 0, saturation: 0 };
 export const DEFAULT_CROP: CropTransform = { zoom: 1, x: 0, y: 0 };

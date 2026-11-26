@@ -1,12 +1,26 @@
 // ---------------------------------------------------------------------------
-// DOTRA particle engine
+// DOTRA particle engine — photograph → QR assembly
 //
-// The signature DOTRA experience: thousands of coloured dots fly across the
-// canvas and assemble into the final image-based QR code. The engine is a pure
-// function of (scene, time) so the exact same code path renders the live
-// preview, the MP4 frames and the GIF frames — and the u = 1 state delegates
-// to the static renderer, guaranteeing the final frame is identical to the
-// verified PNG.
+// Timeline (u = 0..1):
+//   [0.00 .. 0.16]  PHOTO      — particles sit on the module grid as filled
+//                                squares carrying the RAW sampled photograph
+//                                colours (the QR area reads as the photo).
+//                                The smoothed source image crossfades underneath.
+//   [0.10 .. 0.55]  BREAK      — per-particle staggered scatter: the photo
+//                                tiles lift off and fly outward (preset-specific
+//                                vectors: gather / flow / pulse / orbit / reveal).
+//   [0.45 .. 0.92]  ASSEMBLE   — particles converge back onto their assigned
+//                                QR module positions while their colour
+//                                transitions from raw photo colour to the
+//                                tone-banded QR colour. Structural modules
+//                                (finders, timing, alignment, format, version)
+//                                materialise into pure black/white last.
+//   [0.92 .. 1.00]  SETTLE     — global scale/alpha settle.
+//   u >= 1          — delegates to the static renderer → the final animation
+//                     frame is pixel-identical to the verified downloadable QR.
+//
+// The engine is a pure function of (scene, time) so the live preview, the MP4
+// frames and the GIF frames all share one code path.
 // ---------------------------------------------------------------------------
 
 import type { AnimationPreset, DotShape, EasingStyle, MatrixInfo, RGB } from './types';
@@ -18,21 +32,22 @@ export interface ParticleControls {
   duration: number; // seconds (at speed = 1)
   speed: number; // 0.25 .. 3
   intensity: number; // 0 .. 1 — path deviation / spread
-  startDistance: number; // 0 .. 1 — how far particles start
+  startDistance: number; // 0 .. 1 — how far particles scatter
   easing: EasingStyle;
 }
 
 export interface Particle {
-  tx: number; // target centre (px)
+  tx: number; // module centre (px) — also the photo-formation position
   ty: number;
   r: number; // particle radius (px)
-  color: RGB;
+  color: RGB; // final tone-banded QR colour
+  photoColor: RGB; // raw sampled photograph colour (photo phase)
   dark: boolean;
-  structural: boolean; // function module → solid square, pure black/white
-  sx: number; // start position
+  structural: boolean; // function module → solid square, pure black/white at the end
+  sx: number; // scattered position (apex of the break)
   sy: number;
-  delay: number; // normalised 0..1 of timeline
-  dur: number; // normalised flight duration
+  delay: number; // break start (normalised 0..1)
+  dur: number; // break window (normalised)
   seed: number;
   bucket: number;
   orbitRadius: number;
@@ -72,6 +87,45 @@ export const EASINGS: Record<EasingStyle, EaseFn> = {
   },
   linear: (p) => p,
 };
+
+const smooth01 = (t: number) => {
+  const x = clamp(t, 0, 1);
+  return x * x * (3 - 2 * x);
+};
+
+/**
+ * Scatter envelope: 0 (assembled / in photo formation) → 1 (fully scattered)
+ * → 0 (assembled again). `d` = break start, `w` = break window.
+ * Rise is ease-out (snap off), fall is ease-in-out (settle home).
+ */
+export function scatterEnvelope(u: number, d: number, w: number): number {
+  if (u <= d || w <= 0) return 0;
+  const t = (u - d) / w;
+  if (t >= 1) return 0;
+  if (t < 0.42) {
+    const p = t / 0.42;
+    return 1 - Math.pow(1 - p, 3);
+  }
+  const p = (t - 0.42) / 0.58;
+  return 1 - (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
+}
+
+/** Global photo→QR colour transition for data dots (u = 0..1). */
+export function photoBlendT(u: number): number {
+  return smooth01((u - 0.52) / 0.26);
+}
+
+/** Structural modules materialise into pure black/white near the end. */
+export function structuralBlendT(u: number): number {
+  return smooth01((u - 0.62) / 0.24);
+}
+
+/** Lerp two colours. */
+function lerpColor(a: RGB, b: RGB, t: number): RGB {
+  if (t <= 0) return a;
+  if (t >= 1) return b;
+  return { r: a.r + (b.r - a.r) * t, g: a.g + (b.g - a.g) * t, b: a.b + (b.b - a.b) * t };
+}
 
 const SPRITE_PAD = 2;
 
@@ -130,7 +184,8 @@ function getSprite(shape: 'circle' | 'rounded' | 'soft', d: number, color: RGB):
 
 /**
  * Build the particle scene for a finished dot plan. Every module that is
- * visible in the final render gets exactly one particle.
+ * visible in the final render gets exactly one particle, carrying both its
+ * raw photograph colour (photo phase) and its final tone-banded QR colour.
  */
 export function createScene(
   plan: DotPlan,
@@ -152,11 +207,12 @@ export function createScene(
   // Fast colour lookup for data dots.
   const planColors = new Map<number, RGB>();
   for (const dot of plan.dots) planColors.set(dot.row * N + dot.col, dot.color);
+  const photoColors = plan.photoColors;
 
   const particles: Particle[] = [];
   let idx = 0;
 
-  const push = (col: number, row: number, color: RGB, dark: boolean, structural: boolean) => {
+  const push = (col: number, row: number, color: RGB, photoColor: RGB, dark: boolean, structural: boolean) => {
     const tx = origin + (col + 0.5) * modulePx;
     const ty = origin + (row + 0.5) * modulePx;
     const h1 = hash01(idx * 3 + 1);
@@ -165,7 +221,7 @@ export function createScene(
     const distN = Math.hypot(tx - cx, ty - cy) / (diag / 2);
 
     let sx = tx, sy = ty;
-    let delay = 0.05 + h3 * 0.25;
+    let delay = 0.08 + h3 * 0.16;
     let dur = 0.5 + h1 * 0.25;
     let orbitRadius = 0, orbitAngle = 0, orbitDir = 1;
 
@@ -175,22 +231,22 @@ export function createScene(
         const a = h1 * Math.PI * 2;
         sx = cx + Math.cos(a) * R * (0.6 + 0.6 * h2);
         sy = cy + Math.sin(a) * R * (0.6 + 0.6 * h3);
-        delay = 0.08 + h3 * 0.3;
+        delay = 0.06 + h3 * 0.16;
         dur = 0.5 + h1 * 0.25;
         break;
       }
       case 'flow': {
         sx = -r * 2 - h2 * canvasSize * 0.35;
         sy = ty + (h1 - 0.5) * canvasSize * 0.85 * (0.35 + 0.65 * controls.intensity);
-        delay = 0.05 + (tx / canvasSize) * 0.38 + h3 * 0.08;
-        dur = 0.42 + h2 * 0.2;
+        delay = 0.05 + (tx / canvasSize) * 0.3 + h3 * 0.06;
+        dur = 0.45 + h2 * 0.2;
         break;
       }
       case 'pulse': {
         sx = tx;
         sy = ty;
-        delay = 0.04 + distN * 0.62 + h3 * 0.06;
-        dur = 0.2 + h1 * 0.12;
+        delay = 0.04 + distN * 0.34 + h3 * 0.06;
+        dur = 0.3 + h1 * 0.18;
         break;
       }
       case 'orbit': {
@@ -200,21 +256,21 @@ export function createScene(
         orbitDir = h3 > 0.5 ? 1 : -1;
         sx = tx + Math.cos(orbitAngle) * orbitRadius;
         sy = ty + Math.sin(orbitAngle) * orbitRadius;
-        delay = 0.05 + h2 * 0.2;
-        dur = 0.55 + h1 * 0.25;
+        delay = 0.05 + h2 * 0.16;
+        dur = 0.55 + h1 * 0.2;
         break;
       }
       case 'reveal': {
         sx = tx;
         sy = ty;
-        delay = 0.03 + (row / N) * 0.55 + h3 * 0.08;
-        dur = 0.18 + h1 * 0.12;
+        delay = 0.03 + (row / N) * 0.34 + h3 * 0.06;
+        dur = 0.32 + h1 * 0.16;
         break;
       }
     }
 
     particles.push({
-      tx, ty, r, color, dark, structural,
+      tx, ty, r, color, photoColor, dark, structural,
       sx, sy, delay, dur,
       seed: h1 * 1000 + h2,
       bucket: colorBucket(color),
@@ -227,23 +283,24 @@ export function createScene(
     for (let col = 0; col < N; col++) {
       const isFunc = matrix.isFunctionModule(row, col);
       const dark = matrix.isDark(row, col);
+      const photo = photoColors?.[row * N + col] ?? { r: 128, g: 128, b: 128 };
       if (isFunc) {
-        push(col, row, dark ? { r: 10, g: 10, b: 10 } : { r: 255, g: 255, b: 255 }, dark, true);
+        push(col, row, dark ? { r: 10, g: 10, b: 10 } : { r: 255, g: 255, b: 255 }, photo, dark, true);
       } else if (dark) {
-        push(col, row, planColors.get(row * N + col) ?? { r: 20, g: 20, b: 20 }, true, false);
+        push(col, row, planColors.get(row * N + col) ?? { r: 20, g: 20, b: 20 }, photo, true, false);
       } else {
         const c = planColors.get(row * N + col);
-        if (c) push(col, row, c, false, false); // kept light dot
+        if (c) push(col, row, c, photo, false, false); // kept light dot
         // dropped light dots are background — no particle (final frame matches)
       }
     }
   }
 
-  // Normalise so the last particle lands at ~0.92 of the timeline.
+  // Normalise so the last particle finishes its scatter-return by ~0.86.
   let maxEnd = 0;
   for (const p of particles) maxEnd = Math.max(maxEnd, p.delay + p.dur);
-  if (maxEnd > 0.92) {
-    const k = 0.92 / maxEnd;
+  if (maxEnd > 0.86) {
+    const k = 0.86 / maxEnd;
     for (const p of particles) {
       p.delay *= k;
       p.dur *= k;
@@ -265,39 +322,22 @@ export function createScene(
   };
 }
 
-/**
- * Render the scene at normalised timeline time u (0..1).
- * u >= 1 delegates to the static renderer → pixel-identical final frame.
- */
-export function drawSceneFrame(
-  ctx: CanvasRenderingContext2D,
-  scene: ParticleScene,
-  u: number,
-  o: SceneRenderOptions & {
-    plan: DotPlan;
-    matrix: MatrixInfo;
-    quietZone: number;
-    bgColor: string;
-    transparent: boolean;
-    dotSize: number;
-    spacing: number;
-    easing: EasingStyle;
-    renderStatic: (
-      canvas: HTMLCanvasElement,
-      plan: DotPlan,
-      matrix: MatrixInfo,
-      ropts: {
-        quietZone: number;
-        bgColor: string;
-        transparent: boolean;
-        shape: DotShape;
-        dotSize: number;
-        spacing: number;
-        fragmentSource?: HTMLCanvasElement | null;
-      },
-    ) => void;
-    staticCanvas: HTMLCanvasElement;
-    renderOpts: {
+export interface SceneDrawOptions extends SceneRenderOptions {
+  plan: DotPlan;
+  matrix: MatrixInfo;
+  quietZone: number;
+  bgColor: string;
+  transparent: boolean;
+  dotSize: number;
+  spacing: number;
+  easing: EasingStyle;
+  /** Smoothed source photograph, crossfaded under the opening photo phase. */
+  photoSource?: HTMLCanvasElement | null;
+  renderStatic: (
+    canvas: HTMLCanvasElement,
+    plan: DotPlan,
+    matrix: MatrixInfo,
+    ropts: {
       quietZone: number;
       bgColor: string;
       transparent: boolean;
@@ -305,9 +345,25 @@ export function drawSceneFrame(
       dotSize: number;
       spacing: number;
       fragmentSource?: HTMLCanvasElement | null;
-    };
-  },
-): void {
+    },
+  ) => void;
+  staticCanvas: HTMLCanvasElement;
+  renderOpts: {
+    quietZone: number;
+    bgColor: string;
+    transparent: boolean;
+    shape: DotShape;
+    dotSize: number;
+    spacing: number;
+    fragmentSource?: HTMLCanvasElement | null;
+  };
+}
+
+/**
+ * Render the scene at normalised timeline time u (0..1).
+ * u >= 1 delegates to the static renderer → pixel-identical final frame.
+ */
+export function drawSceneFrame(ctx: CanvasRenderingContext2D, scene: ParticleScene, u: number, o: SceneDrawOptions): void {
   const { size, modulePx, particles, preset, intensity } = scene;
 
   if (o.transparent) ctx.clearRect(0, 0, size, size);
@@ -334,77 +390,133 @@ export function drawSceneFrame(
   const fragmentSource = o.fragmentSource;
   const N = scene.matrixSize;
 
-  // Batch by bucket to minimise state switches.
-  const byBucket = new Map<number, Particle[]>();
-  for (const p of particles) {
-    const key = p.structural ? (p.dark ? -1 : -2) : p.bucket;
+  // -- opening photograph underlay (crossfades out as particles form) ---------
+  if (o.photoSource && u < 0.2) {
+    const a = 1 - smooth01((u - 0.02) / 0.13);
+    if (a > 0.001) {
+      ctx.globalAlpha = a;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(o.photoSource, scene.origin, scene.origin, N * modulePx, N * modulePx);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  const blend = photoBlendT(u);
+  const structBlend = structuralBlendT(u);
+  const photoFadeIn = smooth01((u - 0.01) / 0.1); // squares materialise as the photo underlay fades
+
+  // -- per-particle state ------------------------------------------------------
+  // squarePhase: particle renders as a filled module square (photo formation
+  // + the first instants of the break), then becomes a dot. Structural
+  // modules stay module-sized squares for the entire timeline — they end as
+  // the crisp pure black/white squares of the static renderer.
+  interface RenderItem { p: Particle; x: number; y: number; color: RGB; scale: number; alpha: number; square: boolean }
+  const items: RenderItem[] = new Array(particles.length);
+  for (let i = 0; i < particles.length; i++) {
+    const p = particles[i];
+    const s = scatterEnvelope(u, p.delay, p.dur);
+    const x = p.tx + (p.sx - p.tx) * s;
+    const y = p.ty + (p.sy - p.ty) * s;
+
+    const color = p.structural
+      ? lerpColor(p.photoColor, p.dark ? STRUCT_BLACK : STRUCT_WHITE, structBlend)
+      : lerpColor(p.photoColor, p.color, blend);
+
+    const ret = s > 0 ? 1 - s : 1; // 0 scattered → 1 assembled
+    const er = ease(clamp(ret, 0, 1)); // user easing shapes the settle
+    let scale: number;
+    if (p.structural) scale = 1;
+    else if (preset === 'pulse' || preset === 'reveal') {
+      const c1 = 1.70158, c3 = c1 + 1;
+      scale = 0.6 + 0.4 * (1 + c3 * Math.pow(er - 1, 3) + c1 * Math.pow(er - 1, 2));
+    } else {
+      scale = 0.8 + 0.2 * er;
+    }
+    if (preset === 'pulse' && !p.structural) scale *= 1 + 0.3 * s; // breathing while scattered
+
+    const squarePhase = p.structural || u < p.delay + 0.3 * p.dur;
+    items[i] = { p, x, y, color, scale, alpha: globalAlpha, square: squarePhase };
+  }
+
+  // -- pass 1: module squares (photo formation / early break) ------------------
+  const squares = new Map<number, RenderItem[]>();
+  for (const it of items) {
+    if (!it.square) continue;
+    const key = it.p.structural ? (it.p.dark ? -1 : -2) : colorBucket(it.color);
+    const arr = squares.get(key);
+    if (arr) arr.push(it);
+    else squares.set(key, [it]);
+  }
+  for (const arr of squares.values()) {
+    ctx.fillStyle = cssRgb(arr[0].color);
+    ctx.globalAlpha = arr[0].alpha * photoFadeIn;
+    for (const it of arr) {
+      const m = modulePx * 1.02 * it.scale * globalScale;
+      ctx.fillRect(it.x - m / 2, it.y - m / 2, m, m);
+    }
+  }
+
+  // -- pass 2: dots -------------------------------------------------------------
+  const byBucket = new Map<number, RenderItem[]>();
+  for (const it of items) {
+    if (it.square) continue;
+    const key = it.p.structural ? (it.p.dark ? -1 : -2) : colorBucket(it.color);
     const arr = byBucket.get(key);
-    if (arr) arr.push(p);
-    else byBucket.set(key, [p]);
+    if (arr) arr.push(it);
+    else byBucket.set(key, [it]);
   }
 
   for (const arr of byBucket.values()) {
     const first = arr[0];
-    if (!first.structural && shape !== 'pixel' && shape !== 'fragment') {
-      const sprite = getSprite(shape === 'soft' ? 'soft' : shape === 'rounded' ? 'rounded' : 'circle', Math.max(2, first.r * 2), first.color);
-      for (const p of arr) {
-        const e = ease(clamp((u - p.delay) / p.dur, 0, 1));
-        if (e <= 0) continue;
-        const pos = particlePosition(p, e, preset, intensity, scene);
-        const scale = particleScale(p, e, preset) * globalScale;
-        const alpha = particleAlpha(p, e, preset) * globalAlpha;
-        if (alpha < 0.01) continue;
-        ctx.globalAlpha = alpha;
-        const d = p.r * 2 * scale;
-        const s = sprite.size * (d / (p.r * 2));
-        ctx.drawImage(sprite.canvas, pos.x - s / 2, pos.y - s / 2, s, s);
+    if (!first.p.structural && shape !== 'pixel' && shape !== 'fragment') {
+      const sprite = getSprite(shape === 'soft' ? 'soft' : shape === 'rounded' ? 'rounded' : 'circle', Math.max(2, first.p.r * 2), first.color);
+      for (const it of arr) {
+        const d = it.p.r * 2 * it.scale * globalScale;
+        const sp = sprite.size * (d / (it.p.r * 2));
+        ctx.globalAlpha = it.alpha;
+        ctx.drawImage(sprite.canvas, it.x - sp / 2, it.y - sp / 2, sp, sp);
       }
     } else {
-      for (const p of arr) {
-        const e = ease(clamp((u - p.delay) / p.dur, 0, 1));
-        if (e <= 0) continue;
-        const pos = particlePosition(p, e, preset, intensity, scene);
-        const scale = particleScale(p, e, preset) * globalScale;
-        const alpha = particleAlpha(p, e, preset) * globalAlpha;
-        if (alpha < 0.01) continue;
-        ctx.globalAlpha = alpha;
+      for (const it of arr) {
+        ctx.globalAlpha = it.alpha;
 
-        if (p.structural) {
-          const s = modulePx * scale;
-          ctx.fillStyle = p.dark ? '#0a0a0a' : '#ffffff';
-          ctx.fillRect(pos.x - s / 2, pos.y - s / 2, s, s);
+        if (it.p.structural) {
+          const m = modulePx * it.scale * globalScale;
+          ctx.fillStyle = it.p.dark ? '#0a0a0a' : '#ffffff';
+          ctx.fillRect(it.x - m / 2, it.y - m / 2, m, m);
           continue;
         }
 
-        const d = p.r * 2 * scale;
+        const d = it.p.r * 2 * it.scale * globalScale;
         if (shape === 'pixel') {
-          ctx.fillStyle = cssRgb(p.color);
-          ctx.fillRect(pos.x - d / 2, pos.y - d / 2, d, d);
+          ctx.fillStyle = cssRgb(it.color);
+          ctx.fillRect(it.x - d / 2, it.y - d / 2, d, d);
           continue;
         }
         if (shape === 'fragment' && fragmentSource) {
           const dw = fragmentSource.width / N;
           const dh = fragmentSource.height / N;
           const inset = 0.4;
-          const col = (p.tx - scene.origin) / modulePx - 0.5;
-          const row = (p.ty - scene.origin) / modulePx - 0.5;
+          const col = (it.p.tx - scene.origin) / modulePx - 0.5;
+          const row = (it.p.ty - scene.origin) / modulePx - 0.5;
           ctx.save();
           ctx.beginPath();
-          if (ctx.roundRect) ctx.roundRect(pos.x - d / 2, pos.y - d / 2, d, d, d * 0.28);
-          else ctx.rect(pos.x - d / 2, pos.y - d / 2, d, d);
+          if (ctx.roundRect) ctx.roundRect(it.x - d / 2, it.y - d / 2, d, d, d * 0.28);
+          else ctx.rect(it.x - d / 2, it.y - d / 2, d, d);
           ctx.clip();
           ctx.drawImage(
             fragmentSource,
             col * dw + inset, row * dh + inset, dw - inset * 2, dh - inset * 2,
-            pos.x - d / 2, pos.y - d / 2, d, d,
+            it.x - d / 2, it.y - d / 2, d, d,
           );
           ctx.restore();
           continue;
         }
-        // soft / circle / rounded without sprite (shouldn't happen, but safe)
-        ctx.fillStyle = cssRgb(p.color);
+        // soft / circle / rounded — direct arc (covers sprite-miss edge cases)
+        ctx.fillStyle = cssRgb(it.color);
         ctx.beginPath();
-        ctx.arc(pos.x, pos.y, d / 2, 0, Math.PI * 2);
+        ctx.arc(it.x, it.y, d / 2, 0, Math.PI * 2);
         ctx.fill();
       }
     }
@@ -413,57 +525,5 @@ export function drawSceneFrame(
   ctx.globalAlpha = 1;
 }
 
-// --- per-preset kinematics -----------------------------------------------------
-
-function particlePosition(
-  p: Particle,
-  e: number,
-  preset: AnimationPreset,
-  intensity: number,
-  scene: ParticleScene,
-): { x: number; y: number } {
-  switch (preset) {
-    case 'pulse':
-    case 'reveal':
-      return { x: p.tx, y: p.ty };
-    case 'orbit': {
-      const remaining = 1 - e;
-      const ang = p.orbitAngle + p.orbitDir * remaining * Math.PI * 2.2;
-      const rad = p.orbitRadius * remaining;
-      return { x: p.tx + Math.cos(ang) * rad, y: p.ty + Math.sin(ang) * rad };
-    }
-    case 'flow': {
-      const x = p.sx + (p.tx - p.sx) * e;
-      const wob = Math.sin(e * Math.PI * 2 + p.seed) * 10 * intensity * (1 - e);
-      const y = p.sy + (p.ty - p.sy) * e + wob;
-      return { x, y };
-    }
-    default: {
-      // gather — straight flight + perpendicular wobble
-      const px = p.tx - p.sx, py = p.ty - p.sy;
-      const len = Math.hypot(px, py) || 1;
-      const wob = Math.sin(e * Math.PI + p.seed) * 14 * intensity * (1 - e);
-      return {
-        x: p.sx + px * e + (-py / len) * wob,
-        y: p.sy + py * e + (px / len) * wob,
-      };
-    }
-  }
-}
-
-function particleScale(p: Particle, e: number, preset: AnimationPreset): number {
-  if (p.structural) return 1;
-  if (preset === 'pulse' || preset === 'reveal') {
-    // easeOutBack for a satisfying pop-in
-    const c1 = 1.70158, c3 = c1 + 1;
-    return 1 + c3 * Math.pow(e - 1, 3) + c1 * Math.pow(e - 1, 2);
-  }
-  if (preset === 'flow' || preset === 'gather') return 0.8 + 0.2 * e;
-  return 1;
-}
-
-function particleAlpha(p: Particle, e: number, preset: AnimationPreset): number {
-  if (p.structural) return e;
-  if (preset === 'flow') return 1;
-  return e;
-}
+const STRUCT_BLACK: RGB = { r: 10, g: 10, b: 10 };
+const STRUCT_WHITE: RGB = { r: 255, g: 255, b: 255 };

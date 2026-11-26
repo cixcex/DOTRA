@@ -8,7 +8,7 @@ export type ECLevel = 'L' | 'M' | 'Q' | 'H';
 
 export type DotShape = 'circle' | 'rounded' | 'pixel' | 'fragment' | 'soft';
 
-export type QualityPreset = 'resemblance' | 'balanced' | 'reliability';
+export type QualityPreset = 'photo' | 'balanced' | 'scan';
 
 export type AnimationPreset = 'gather' | 'flow' | 'pulse' | 'orbit' | 'reveal';
 
@@ -17,6 +17,13 @@ export type EasingStyle = 'easeOut' | 'easeInOut' | 'spring' | 'linear';
 export type AnimationBackground = 'white' | 'light' | 'dark' | 'transparent';
 
 export type TargetVersion = 'auto' | 'small' | 'medium' | 'large';
+
+/** Recommended matrix bucket per quality mode (photo detail wants large matrices). */
+export const MODE_VERSION_HINT: Record<QualityPreset, TargetVersion> = {
+  photo: 'large',
+  balanced: 'medium',
+  scan: 'auto',
+};
 
 export type VerificationStatus = 'idle' | 'working' | 'optimizing' | 'verified' | 'failed';
 
@@ -55,6 +62,14 @@ export interface QROptions {
 /** Quality presets balance image resemblance vs scan reliability. */
 export interface QualityOptions {
   preset: QualityPreset;
+}
+
+/** Photographic preprocessing toggles, derived from the quality mode. */
+export interface EnhanceOptions {
+  smartCrop: boolean; // saliency-aware crop centering
+  autoContrast: boolean; // percentile luminance stretch
+  clahe: boolean; // local contrast enhancement (tile histograms)
+  sharpen: boolean; // edge-aware unsharp mask on luminance
 }
 
 /** Everything needed to render one finished dot-QR. */

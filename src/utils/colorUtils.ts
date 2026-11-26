@@ -73,6 +73,37 @@ export function blendTowardWhite(c: RGB, t: number): RGB {
   return { r: c.r + (255 - c.r) * k, g: c.g + (255 - c.g) * k, b: c.b + (255 - c.b) * k };
 }
 
+/**
+ * Scale a colour proportionally so its luminance becomes `target`.
+ * Down-scaling never clips — hue is preserved exactly. Used for dark modules.
+ */
+export function scaleToLuminance(c: RGB, y: number, target: number): RGB {
+  if (y <= 0.5) return { r: target, g: target, b: target };
+  const k = target / y;
+  return { r: clamp(c.r * k, 0, 255), g: clamp(c.g * k, 0, 255), b: clamp(c.b * k, 0, 255) };
+}
+
+/**
+ * Hue-safe luminance LIFT for light modules: scale proportionally until the
+ * brightest channel would clip, then blend the residual toward white
+ * (white-blending preserves hue exactly). The result lands on `target`.
+ */
+export function liftToLuminance(c: RGB, y: number, target: number): RGB {
+  if (y <= 0.5) return { r: target, g: target, b: target };
+  const k = target / y;
+  const mx = Math.max(c.r, c.g, c.b);
+  const kMax = mx > 0 ? Math.min(k, 255 / mx) : k;
+  let r = c.r * kMax, g = c.g * kMax, b = c.b * kMax;
+  if (kMax < k - 1e-6) {
+    const y2 = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    const t = clamp((target - y2) / Math.max(255 - y2, 0.5), 0, 1);
+    r = r + (255 - r) * t;
+    g = g + (255 - g) * t;
+    b = b + (255 - b) * t;
+  }
+  return { r, g, b };
+}
+
 /** Blend a colour toward neutral grey (desaturation); `t` in [0,1]. */
 export function desaturate(c: RGB, t: number): RGB {
   const k = clamp(t, 0, 1);

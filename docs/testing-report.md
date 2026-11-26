@@ -3,44 +3,56 @@
 Everything below was executed against the code in this repository. Engine results
 are reproducible with `npm run test:engine`.
 
-## 1. Node engine harness — 95 / 95 passed
+## 1. Node engine harness — 124 / 124 passed
 
 `scripts/test-engine.ts` runs the *same* DOM-free planning logic the browser uses
 (`buildDotPlanFromSamples`), rasterizes with a geometry-identical PNG renderer
-(`scripts/pngkit.mjs`), and decodes the result with jsQR.
+(`scripts/pngkit.mjs`), and decodes the result with jsQR. The v2 harness adds
+photographic-fidelity metrics, six photo categories and the animation timeline
+math (the particle scene builder is DOM-free, so the real `createScene` runs in
+Node).
 
 | Group | Coverage | Result |
 | --- | --- | --- |
-| T1 Matrix & version growth | v1→v4 growth loop, no re-throw on first overflow; bucket versions v4/v8/v14; minimum-version probe | ✓ |
+| T1 Matrix & version growth | v1→v40 growth loop, no re-throw on first overflow; bucket versions v4/v8/v14; minimum-version probe | ✓ |
 | T2 Function-module mask | finders, separators, timing, alignment, version info, format info, dark module protected; v2 protected count = 282 (hand-computed); v1/v4/v14 spot checks | ✓ |
-| T3 Decode matrix | 4 artworks × 3 presets × 5 shapes × 3 geometries = 180 rasterized QRs, jsQR-decoded | ✓ 180/180 |
-| T4 URL × EC × version | 4 URLs × 4 EC levels × 3 version buckets, decode + payload equality | ✓ 48/48 |
-| T5 Density / intensity / quiet zone | density 0.2–1.0, colorIntensity 0/1, quiet zone 2 vs 6 | ✓ |
-| T6 Repair escalation | synthetic hostile sample forces ladder rungs 1–4; each rung re-verifies; EC-H re-encode at rung 5 | ✓ |
-| T7 Tone invariants | dark cap / light floor per preset; `analyzeToneHealth` warnings at darkCap>150, lightFloor<215 | ✓ |
-| T8 Large matrix end-to-end | v14 (73×73) with fragment dots: >4000 dots, jsQR decode of the raster | ✓ |
+| T3 Decode matrix | 4 artworks × 3 modes × 5 shapes × 3 geometries = 180 rasterized QRs, jsQR-decoded | ✓ 180/180 |
+| T4 URL × EC × version | 3 URLs × 4 EC levels × 4 version buckets, decode + payload equality | ✓ 48/48 |
+| T5 Density / intensity / quiet zone | density 0.3–1.0, colorIntensity 0/0.5/1, quiet zone 2/3/8 | ✓ |
+| T6 Repair escalation | bright artwork + adversarial geometry (dot 0.6 / gap 0.25 / density 0.7) under Photo bands; ladder rescues; dark artwork + Scan mode decodes at rung 1 | ✓ |
+| T7 Tone band invariants | every dot inside its mode's dark/light band; band separation ≥ 100 luma levels; repair bands monotonically safer | ✓ |
+| T8 Large matrix end-to-end | v14 (73×73) fragment dots: 4,647 dots, N² raw photo colours on the plan, jsQR decode of the raster; fragment band invariants on the tone-safe detail (dark ≤ 96, light ≥ 246) | ✓ |
+| T9 Photographic fidelity | portrait artwork, Photo mode: per-band luma Pearson r = 1.000 (dark) / 0.996 (light); mean Δhue 1.7° over 2,775 saturated modules; chroma retention 0.66; band-wise spatial correspondence r ≈ 1.0 vs within-band shuffled control ≈ 0 (proves the photograph — not a gradient — drives the colours); Scan mode decodes the same portrait | ✓ |
+| T10 Six photo categories | portrait / landscape / animal / dark / bright / multicolor artworks × 3 modes at v14: decode + per-band fidelity for all 18 combinations | ✓ 18/18 |
+| T11 Animation timeline | scatter envelope 0→1→0, single-peaked, bounded; photo→QR and structural blends monotone 0→1; structural materializes after data colour shift; real `createScene`: all 2,401 modules carry their raw photo colour (structural included), scatter-return completes by u = 0.86, particle count = dots + structural | ✓ |
 
-**Final: 95 passed, 0 failed.**
+**Final: 124 passed, 0 failed.**
+
+Recognizability note: the harness cannot *see* images. Its fidelity metrics are
+the honest programmatic proxies — per-band luma correlation (the photo's tonal
+structure survives inside each band), hue preservation (Δhue ≈ 2°), chroma
+retention, and the shuffled-control spatial check. The rendered PNGs are saved
+to `/tmp/test-photo-*.png` for human review.
 
 ## 2. Tone calibration (empirical, jsQR)
 
-The calibration exposed a real failure mode: jsQR's area-based binarization flips
-mid-luminance "light" modules to dark in blocks that contain no dark modules.
+Two calibration rounds, one per engine generation:
 
-| Light floor | Result |
-| --- | --- |
-| 182 / 200 | decode failures (182/200 test renders failed) |
-| ≥ 215 | reliable |
-| ≥ 235 | safe across all tested artworks |
+**Crush engine (v1)** — dark modules blended to black, light modules to white.
+jsQR's area-based binarization flips mid-luminance "light" modules to dark in
+blocks without dark modules: light floor 182/200 failed, ≥ 215 reliable, ≥ 235
+safe everywhere. That engine could not show a photograph.
 
-Dark modules tolerate caps up to ~150. These findings set the preset floors
-(232/238/246), the repair ladder floors (244→254), the fragment band
-(`floor+8`, min 246), and the health warnings in `analyzeToneHealth`.
+**Band engine (v2, current)** — every module keeps the photo's hue; luminance is
+pinned into a dark band or a light band. The harness re-validated the whole
+decode matrix (T3: 180/180) with the new bands, including the densest
+configuration (Photo mode, all light modules kept, v14 fragments). The Photo
+mode's light floor (230) sits inside the empirically safe zone; when a hostile
+image still fails, the repair ladder widens the bands (238 → 242 → 246 → 250).
 
-Fragment dots initially failed with raw image patches (tone clamping bypassed).
-The fix — a tone-safe clamped detail canvas plus a tighter fragment band — was
-also validated empirically: compression of the patches did not help; the band and
-margins did.
+Fragment dots use a tighter band (cap ≤ 96, floor ≥ 246) because textured
+patches drift jsQR's local threshold more than flat dots — unchanged from v1
+and re-asserted in T8.
 
 ## 3. Browser verification gate
 
@@ -68,18 +80,24 @@ contract at runtime:
 - No camera/MP4/WebCodecs runtime QA was possible in the build environment
   (headless, no devices). The camera path uses standard `getUserMedia` + rAF +
   jsQR; the MP4 path probes capability first and degrades explicitly.
-- GIF export at 4096-dot counts is intentionally capped at 480 px / 12 fps for
+- GIF export at 5k-dot counts is intentionally capped at 480 px / 12 fps for
   palette stability; PNG and MP4 carry full resolution.
+- The bundled 24 samples are procedural artworks, not photographs; the harness
+  covers true photographic categories (portrait/landscape/animal/dark/bright/
+  multicolor) with synthetic photo-like artworks.
 
 ## 6. Manual QA checklist (for the reviewer)
 
-1. `npm run dev` → studio loads with the ember-ridge sample; the preview animates
-   and the badge turns green with the decoded URL.
-2. Switch all 5 dot shapes and 5 animation presets — preview re-verifies each time.
-3. Enter a long URL with `Large` matrix + `Fragment` dots — still verifies.
-4. Upload a busy photograph with `Maximum resemblance` — watch the repair ladder
-   engage (attempt log) and either verify or report honestly.
-5. Export PNG 1024/2048/4096, MP4, GIF — each file decodes with the correct URL
-   (use the in-app Test QR modal on the downloaded PNG).
-6. Test QR modal → camera tab → scan a printed DOTRA QR; upload tab → decode a
-   phone screenshot of one.
+1. `npm run dev` → studio loads with the ember-ridge sample; the preview opens
+   on the photograph, breaks into particles, assembles into the dot QR, and the
+   badge turns green with the decoded URL.
+2. Switch all 3 quality modes (Photo / Balanced / Scan) — Photo is visibly the
+   most photographic; Scan the most high-contrast. All verify.
+3. Switch all 5 dot shapes and 5 animation presets — preview re-verifies each
+   time; the final frame always matches the exported PNG.
+4. Upload a real portrait photograph in Photo mode + Large matrix — facial
+   features, hair and clothing tones are recognizable through the dots; the
+   in-app Test QR modal's upload tab decodes the exported PNG to the exact URL.
+5. Enter a long URL with `Large` matrix + `Fragment` dots — still verifies.
+6. Export PNG 1024/2048/4096, MP4, GIF — each file decodes with the correct URL.
+7. Test QR modal → camera tab → scan a printed DOTRA QR with a phone.

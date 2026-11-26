@@ -44,10 +44,12 @@ with jsQR at generation time — the same gate every export passes.*
 ## What it does
 
 DOTRA is a single-page studio that transforms photographs and artwork into QR codes
-where **every data dot carries real image colour** — up to ~5,300 dots on a 73×73
-module matrix. It is not a sticker slapped on a code: the QR matrix is generated
-genuinely from your link, structural modules stay pure black and white, and the
-result is decoded by jsQR from the raster that would actually be exported.
+that **stay recognizable as the photograph and genuinely scan** — up to ~5,300
+dots on a 73×73 module matrix, each dot carrying its module's sampled colour with
+the photograph's hue preserved. It is not a sticker slapped on a code: the QR
+matrix is generated genuinely from your link, structural modules stay pure black
+and white, and the result is decoded by jsQR from the raster that would actually
+be exported.
 
 Everything runs in your browser tab. No servers, no uploads, no accounts, no
 analytics on your content.
@@ -59,7 +61,8 @@ analytics on your content.
 | **Genuine QR matrices** | Real ISO/IEC 18004 encoding; finder, timing, alignment, version and format patterns render as pure black/white — scanner-critical geometry is never decorated. |
 | **Pixel-level verification** | jsQR decodes the *rendered raster*, not the internal matrix, and the payload is compared against your normalized URL. Downloads stay locked until a decode matches. |
 | **Automatic repair** | A five-rung escalation ladder (tone separation → desaturation → full-size dots → EC level H) re-verifies at every step. The encoded URL never changes. |
-| **Three quality presets** | Resemblance / Balanced / Reliability — conservative luminance bounds, empirically calibrated against jsQR's area-based binarization. |
+| **Three quality modes** | Photo / Balanced / Scan — per-module luminance bands (Photo 10–118 / 230–250 …) keep the photograph's hue inside empirically calibrated, decoder-safe bounds. |
+| **Photographic pipeline** | Saliency smart crop, percentile auto-contrast, CLAHE and an unsharp mask run client-side before a single dot is drawn. |
 | **Five dot shapes** | Circle, rounded, pixel, soft glow, and **fragment** — true image crops inside each dot, tone-clamped for scan safety. |
 | **Five assembly animations** | Gather, flow, pulse, orbit, reveal — with the final animation frame pixel-identical to the verified static render. |
 | **Three export formats** | PNG (1024/2048/4096 px), MP4 at 1080p30 (WebCodecs + mp4-muxer, explicit WebM fallback), GIF at 480 px. Each export re-verifies at its own resolution. |
@@ -72,8 +75,9 @@ analytics on your content.
 
 1. The matrix is real; the render is rasterized; **jsQR decodes the pixels**.
 2. The encoded URL is immutable during repair — only rendering parameters change.
-3. Module dark/light values are never altered for aesthetics; tone mapping operates
-   inside calibrated bounds (light floors 232–246, dark caps 78–128 per preset).
+3. Module dark/light values are never altered for aesthetics; tone mapping pins each
+   dot into its mode's calibrated luminance band (e.g. Photo: dark 10–118,
+   light 230–250) with hue preserved.
 4. PNG exports re-verify at 1024, 2048 and 4096 px; video at 1080 px; GIF at 480 px —
    anti-aliasing behaves differently at each size, so each is checked on its own pixels.
 5. If the repair ladder is exhausted, the failure is reported honestly (including
@@ -111,8 +115,8 @@ npm run preview      # serve the production build
 
 ```
 URL ─▶ normalize & validate ─▶ encode QR matrix (qrcode-generator)
-        ─▶ sample image onto the N×N module grid (+ hi-res detail canvas)
-        ─▶ plan every dot under strict luminance constraints
+        ─▶ smart crop → CLAHE → unsharp → sample onto the N×N module grid
+        ─▶ plan every dot under strict luminance bands (hue preserved)
         ─▶ render static frame + build particle scene
         ─▶ jsQR decodes the ACTUAL rendered raster (Web Worker)
         ─▶ payload == your URL?  ──yes──▶ downloads unlocked
@@ -123,8 +127,8 @@ URL ─▶ normalize & validate ─▶ encode QR matrix (qrcode-generator)
 
 | # | Strategy | What changes |
 |---|---|---|
-| 1 | Preset tones | The chosen preset's calibrated bounds |
-| 2 | Stronger tone separation | dark cap 95 / light floor 244 |
+| 1 | Mode tone bands | The chosen mode's calibrated bands |
+| 2 | Wider band separation | dark cap 100 / light floor 238 |
 | 3 | + Desaturation | dark dots pulled toward neutral |
 | 4 | Full-size dots, no gaps | dot size → 100%, spacing → 0 |
 | 5 | Maximum redundancy | matrix re-encoded at EC level H |
@@ -142,13 +146,19 @@ URL ─▶ normalize & validate ─▶ encode QR matrix (qrcode-generator)
 The Node harness (`npm run test:engine`) runs the **same DOM-free planning logic**
 the browser uses and rasterizes with geometry-identical math, then decodes with jsQR:
 
-- 180 rasterized QRs decoded across 4 artworks × 3 presets × 5 shapes × 3 geometries
+- 180 rasterized QRs decoded across 4 artworks × 3 modes × 5 shapes × 3 geometries
 - 48 URL × error-correction × version-bucket combinations with payload equality
 - ISO 18004 function-module mask assertions (v2 = 282 protected modules, hand-computed)
+- Photographic-fidelity metrics: per-band luma r = 1.000/0.996, mean Δhue 1.7°,
+  chroma retention 0.66, shuffled-control spatial checks
+- Six photo categories (portrait, landscape, animal, dark, bright, multicolor)
+  × three modes at v14 — decode + fidelity, 18/18
+- Animation timeline math + real scene builder: every module carries its raw
+  photo colour; scatter-return completes before settle
 - Version growth, density / intensity / quiet-zone behaviour, repair escalation,
-  tone invariants, and a v14 fragment-dot end-to-end decode
+  band invariants, and a v14 fragment-dot end-to-end decode
 
-**Result: 95 passed, 0 failed.** Full detail in [docs/testing-report.md](docs/testing-report.md).
+**Result: 124 passed, 0 failed.** Full detail in [docs/testing-report.md](docs/testing-report.md).
 
 ## Documentation
 

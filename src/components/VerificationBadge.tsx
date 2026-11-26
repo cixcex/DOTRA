@@ -69,7 +69,7 @@ export function VerificationBadge({
           </p>
         )}
         <p className="text-xs text-ink/70 mt-2 leading-relaxed">
-          Try the <em>Maximum scan reliability</em> preset, a less busy image, or a shorter URL.
+          Try the <em>Scan</em> mode, a less busy image, or a shorter URL.
         </p>
       </div>
     );

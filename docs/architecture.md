@@ -21,9 +21,9 @@ keep the system testable, private and honest about scanability.
 | --- | --- |
 | `engine/types.ts` | Shared types: options, Dot, MatrixInfo, DotPlan, VerificationStatus, DecodeResult |
 | `engine/qrGenerator.ts` | URL → genuine QR matrix (`qrcode-generator`), ISO 18004 function-module mask, version buckets, minimum-version probe |
-| `engine/imageProcessor.ts` | Crop/transform + tone adjustments; N×N module sampling; high-res detail canvas for fragment dots |
-| `engine/dotRenderer.ts` | Colour mapping under luminance constraints; dot planning (density selection); static rasterization; tone-safe fragment detail |
-| `engine/particleEngine.ts` | Particle scene construction (one particle per visible module), per-frame animation state, scene drawing |
+| `engine/imageProcessor.ts` | Saliency smart crop, tone adjustments (brightness/contrast/saturation), percentile auto-contrast, CLAHE, unsharp mask; N×N module sampling; high-res detail canvas for fragment dots |
+| `engine/dotRenderer.ts` | Luminance-band tone mapping (hue-preserving); dot planning (density selection); static rasterization; tone-safe fragment detail; N² raw photo colours on the plan |
+| `engine/particleEngine.ts` | Particle scene (one particle per visible module carrying raw photo + final QR colours); photo → scatter → assemble timeline; scene drawing |
 | `engine/qrVerifier.ts` | jsQR decoding (Web Worker + main-thread fallback), URL comparison, canvas verification |
 | `engine/animationFrames.ts` | `FrameSource` — the common input for video/GIF exporters |
 | `engine/pngExporter.ts` | Canvas → PNG blob, download helper, safe filename derivation |
@@ -42,12 +42,13 @@ URL input
 encodeQR(url, ec, bucket)
   │ qrcode-generator          → matrix (isDark), version, error-correction
   ▼
-processImage(img, crop, N, adjustments)
-  │ canvas resample           → { sample (N×N), detail (high-res) }
+processImage(img, crop, N, adjustments, enhance)
+  │ smart crop → LUTs → auto-contrast → CLAHE → unsharp → N×N resample
+  │                                          → { sample (N×N), detail (high-res), stats }
   ▼
-buildDotPlan({ matrix, processed, dots, preset, repairLevel })
-  │ sampleModuleColors → mapModuleColor → toneHealth → density selection
-  │                           → { dots[], toneHealth, moduleCount, fragmentSource }
+buildDotPlan({ matrix, processed, dots, preset, repairLevel, colorIntensity, enhance })
+  │ sampleModuleColors → mapModuleColor (band mapping) → toneHealth → density
+  │                           → { dots[], photoColors (N² raw samples), toneHealth, fragmentSource }
   ▼
 renderPlanToCanvas(plan, matrix, renderOpts, px)     → static PNG-identical frame
   ▼
@@ -72,6 +73,9 @@ For a matrix of size `N` with quiet zone `q` on a square canvas of side `S`:
 - dot diameter `d = mp · clamp(dotSize − spacing, 0.25, 1)`
 - fragment patches are module-aligned crops from the high-res detail canvas
   (detail resolution `clamp(N·24, 256, 2048)`), inset 0.4 px at detail scale
+- tone mapping is band-based: dark modules → `[darkLo, darkCap]`, light modules
+  → `[lightFloor, lightCap]`, hue preserved by proportional RGB scaling
+  (`mapModuleColor` in `utils/contrastOptimizer.ts`)
 
 The Node test harness rasterizes with byte-identical geometry, which is why its
 jsQR decode results are meaningful evidence for the browser path.
@@ -79,10 +83,14 @@ jsQR decode results are meaningful evidence for the browser path.
 ## Animation
 
 `ParticleScene` holds one particle per *visible* module (structural and data),
-each with its target centre, colour, delay and motion vector derived from the
-animation preset. `drawSceneFrame(ctx, scene, u, opts)` interpolates; at `u ≥ 1`
-it calls the very same `renderDotQR` used for PNG export, so the last animation
-frame is pixel-identical to the verified static render. Hold frames draw statically.
+each with its target centre, delay and motion vector derived from the animation
+preset, and **two colours**: the raw sampled photograph colour and the final
+tone-banded QR colour. `drawSceneFrame(ctx, scene, u, opts)` plays the timeline:
+photo phase (module-grid photo tiles over a crossfading source underlay) →
+staggered scatter → converge with the photo→QR colour transition → structural
+modules materialize as pure black/white last → settle. At `u ≥ 1` it calls the
+very same `renderDotQR` used for PNG export, so the last animation frame is
+pixel-identical to the verified static render. Hold frames draw statically.
 
 ## Workers
 

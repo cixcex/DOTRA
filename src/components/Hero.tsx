@@ -22,6 +22,7 @@ function HeroDemo() {
   const [matrix, setMatrix] = useState<MatrixInfo | null>(null);
   const [verified, setVerified] = useState<boolean | null>(null);
   const [failed, setFailed] = useState(false);
+  const [photoSrc, setPhotoSrc] = useState<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -36,17 +37,20 @@ function HeroDemo() {
         });
         if (cancelled) return;
 
-        const matrix = encodeQR(HERO_DEMO_URL, 'M', 'auto').matrix;
+        const matrix = encodeQR(HERO_DEMO_URL, 'M', 'large').matrix;
         const processed = processImage(
           img,
-          { zoom: 1, x: 0, y: 0 } as CropTransform,
-          matrix.size,
-          { brightness: 0, contrast: 0, saturation: 0 } as ImageAdjustments,
+          {
+            crop: { zoom: 1, x: 0, y: 0 } as CropTransform,
+            matrixSize: matrix.size,
+            adjustments: { brightness: 0, contrast: 0, saturation: 0 } as ImageAdjustments,
+            enhance: { smartCrop: true, autoContrast: true, clahe: true, sharpen: true },
+          },
         );
         const plan = buildDotPlan({
           matrix,
           processed,
-          dots: { shape: 'circle', size: 0.8, spacing: 0.12, density: 1, colorIntensity: 1 },
+          dots: { shape: 'circle', size: 0.78, spacing: 0.13, density: 1, colorIntensity: 1 },
           preset: 'balanced',
           repairLevel: 0,
         });
@@ -57,7 +61,7 @@ function HeroDemo() {
         // Verify the exact static frame jsQR would see.
         const staticCanvas = renderPlanToCanvas(plan, matrix, {
           quietZone: 4, bgColor: '#ffffff', transparent: false,
-          shape: 'circle', dotSize: 0.8, spacing: 0.12, fragmentSource: plan.fragmentSource,
+          shape: 'circle', dotSize: 0.78, spacing: 0.13, fragmentSource: plan.fragmentSource,
         }, 540);
         const outcome = await verifyCanvas(staticCanvas, HERO_DEMO_URL);
 
@@ -65,6 +69,7 @@ function HeroDemo() {
         setMatrix(matrix);
         setPlan(plan);
         setScene(scene);
+        setPhotoSrc(processed.detail);
         setVerified(outcome.verified);
         if (!outcome.verified) setFailed(true);
       } catch {
@@ -84,10 +89,11 @@ function HeroDemo() {
       bgColor: '#ffffff',
       transparent: false,
       shape: 'circle',
-      dotSize: 0.8,
-      spacing: 0.12,
+      dotSize: 0.78,
+      spacing: 0.13,
       fragmentSource: plan?.fragmentSource ?? null,
     },
+    photoSource: photoSrc,
     easing: 'easeOut',
     playing: true,
     replayKey: 0,

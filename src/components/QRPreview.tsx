@@ -18,7 +18,7 @@ export interface PreviewRenderOpts {
 
 export function QRPreview({
   scene, plan, matrix, renderOpts, easing, playing, onTogglePlaying, replayKey, onReplay,
-  empty, phase,
+  empty, phase, photoSource,
 }: {
   scene: ParticleScene | null;
   plan: DotPlan | null;
@@ -31,6 +31,7 @@ export function QRPreview({
   onReplay: () => void;
   empty: boolean;
   phase: string;
+  photoSource?: HTMLCanvasElement | null;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -40,6 +41,7 @@ export function QRPreview({
     plan,
     matrix,
     renderOpts,
+    photoSource,
     easing,
     playing: playing && !empty,
     replayKey,

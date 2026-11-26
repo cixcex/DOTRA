@@ -12,6 +12,7 @@ import {
 import { SAMPLES, type SampleItem } from '@/lib/samples';
 import { normalizeUrl } from '@/utils/urlValidator';
 import { loadImageFromUrl } from '@/utils/imageUtils';
+import { MODE_VERSION_HINT } from '@/engine/types';
 import { Card, TextInput } from './primitives';
 import { QRPreview, type PreviewRenderOpts } from './QRPreview';
 import { VerificationBadge } from './VerificationBadge';
@@ -87,6 +88,12 @@ export function Studio() {
     window.addEventListener('dotra:select-sample', handler);
     return () => window.removeEventListener('dotra:select-sample', handler);
   }, []);
+
+  // Photographic modes need matrix density to be recognizable — when the user
+  // leaves the matrix on Auto, follow the mode's recommended bucket.
+  useEffect(() => {
+    setQr((q) => (q.targetVersion === 'auto' ? { ...q, targetVersion: MODE_VERSION_HINT[preset] } : q));
+  }, [preset]);
 
   const urlCheck = useMemo(() => normalizeUrl(urlInput), [urlInput]);
 
@@ -246,6 +253,7 @@ export function Studio() {
               plan={state.plan}
               matrix={state.matrix}
               renderOpts={renderOpts}
+              photoSource={gen.state.processed?.detail ?? null}
               easing={anim.easing}
               playing={playing}
               onTogglePlaying={() => setPlaying((p) => !p)}
@@ -271,7 +279,7 @@ export function Studio() {
 
         {/* ——— Right column ——— */}
         <div className="space-y-5">
-          <Card title="Quality" subtitle="Scan reliability vs. resemblance">
+          <Card title="Quality" subtitle="Photographic fidelity vs. scan margin">
             <QualitySection preset={preset} onChange={setPreset} />
           </Card>
 
