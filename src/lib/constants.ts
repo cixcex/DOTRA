@@ -23,9 +23,9 @@ export const MODE_ENHANCE: Record<QualityPreset, { smartCrop: boolean; autoContr
 };
 
 export const DOT_SHAPES: { id: DotShape; label: string; hint: string }[] = [
+  { id: 'pixel', label: 'Square', hint: 'Precise black-and-white modules — the photographic look' },
   { id: 'circle', label: 'Circle', hint: 'Classic DOTRA dot' },
   { id: 'rounded', label: 'Rounded', hint: 'Soft squared dots' },
-  { id: 'pixel', label: 'Pixel', hint: 'Sharp square modules' },
   { id: 'fragment', label: 'Fragment', hint: 'True image crops inside each dot' },
   { id: 'soft', label: 'Soft', hint: 'Feathered particle glow' },
 ];
@@ -66,8 +66,14 @@ export const ANIM_BACKGROUNDS: { id: AnimationBackground; label: string; css: st
   { id: 'transparent', label: 'Transparent', css: 'transparent' },
 ];
 
-export const DEFAULT_DOTS: DotOptions = { shape: 'circle', size: 0.78, spacing: 0.13, density: 1, colorIntensity: 1 };
-export const DEFAULT_QR: QROptions = { ecLevel: 'M', quietZone: 4, targetVersion: 'auto', bgColor: '#ffffff', transparentBackground: false };
+export const DEFAULT_DOTS: DotOptions = {
+  shape: 'pixel', size: 0.88, spacing: 0.02, density: 1, colorIntensity: 1,
+  influence: 0.6, moduleContrast: 0.85, bwIntensity: 1, colourTreatment: false,
+};
+export const DEFAULT_QR: QROptions = {
+  ecLevel: 'H', quietZone: 6, targetVersion: 'auto', bgColor: '#ffffff',
+  transparentBackground: false, perforationBorder: true,
+};
 export const DEFAULT_ADJ: ImageAdjustments = { brightness: 0, contrast: 0, saturation: 0 };
 export const DEFAULT_CROP: CropTransform = { zoom: 1, x: 0, y: 0 };
 export const DEFAULT_ANIM: ParticleControls & { background: AnimationBackground } = {

@@ -14,6 +14,10 @@ export interface PreviewRenderOpts {
   dotSize: number;
   spacing: number;
   fragmentSource: HTMLCanvasElement | null;
+  /** Photograph composited beneath the module grid (identical in exports). */
+  photoUnderlay?: HTMLCanvasElement | null;
+  /** Decorative perforation ring on the white frame. */
+  perforationBorder?: boolean;
 }
 
 export function QRPreview({

@@ -57,11 +57,41 @@ export interface MapColorOptions {
   colorIntensity: number; // 0..1 — how much image colour survives
   repairLevel: number; // 0 = preset bands, 1..4 = escalating repair
   desaturateDark?: number; // extra desaturation for dark modules during repair
+  // Photographic integration (v3)
+  influence?: number; // 0..1 — photograph visible through the module (default 1 = full band colour)
+  moduleContrast?: number; // 0.4..1.4 — scales band width around its centre (clamped to the safe envelope)
+  bwIntensity?: number; // 0..1 — desaturation of the photo contribution (1 = pure greyscale)
+  colourTreatment?: boolean; // keep photo hue (default false = black & white modules)
 }
 
 const clamp255 = (v: number) => (v < 0 ? 0 : v > 255 ? 255 : v);
 
-/** Map one sampled colour into its module's luminance band, preserving hue. */
+/** Scale a band around its centre, clamped to the decoder-safe envelope. */
+function scaledBand(lo: number, hi: number, k: number, minLo: number, maxHi: number): { lo: number; hi: number } {
+  const c = (lo + hi) / 2;
+  const h = ((hi - lo) / 2) * k;
+  return { lo: Math.max(minLo, c - h), hi: Math.min(maxHi, c + h) };
+}
+
+const mix = (a: RGB, b: RGB, t: number): RGB => ({
+  r: a.r + (b.r - a.r) * t,
+  g: a.g + (b.g - a.g) * t,
+  b: a.b + (b.b - a.b) * t,
+});
+
+const grayOf = (c: RGB): RGB => {
+  const y = luminance(c);
+  return { r: y, g: y, b: y };
+};
+
+/**
+ * Map one sampled colour into its module's luminance band, preserving hue,
+ * then apply the v3 photographic-integration display transform:
+ *   band colour → (optionally greyscale / desaturated) → lerp toward the
+ *   black/white pole by (1 - influence).
+ * Because the band mapping already pins luminance into a decoder-safe band and
+ * the poles are pure black / white, EVERY influence level stays scan-safe.
+ */
 export function mapModuleColor(sample: RGB, opts: MapColorOptions): RGB {
   if (opts.protectedModule) {
     return opts.dark ? { r: 8, g: 8, b: 8 } : { r: 255, g: 255, b: 255 };
@@ -79,37 +109,56 @@ export function mapModuleColor(sample: RGB, opts: MapColorOptions): RGB {
     };
   }
 
-  const tones = opts.repairLevel <= 0 ? PRESET_TONES[opts.preset] : REPAIR_TONES[Math.min(Math.max(opts.repairLevel, 1), 4) - 1];
+  const base = opts.repairLevel <= 0 ? PRESET_TONES[opts.preset] : REPAIR_TONES[Math.min(Math.max(opts.repairLevel, 1), 4) - 1];
+  const k = opts.moduleContrast ?? 1;
+  const dk = scaledBand(base.darkLo, base.darkCap, k, 2, 160);
+  const lt = scaledBand(base.lightFloor, base.lightCap, k, 215, 254);
+  const tones = { darkLo: dk.lo, darkCap: dk.hi, lightFloor: lt.lo, lightCap: lt.hi, chromaBoost: base.chromaBoost };
   const y = luminance(c);
 
+  let banded: RGB;
   if (opts.dark) {
     // Dark module: compress the sampled tone into the dark band. Pure
     // proportional down-scale — hue is preserved exactly, nothing clips.
     const target = tones.darkLo + (clamp255(y) / 255) * (tones.darkCap - tones.darkLo);
-    let out = scaleToLuminance(c, y, target);
+    banded = scaleToLuminance(c, y, target);
     if (opts.desaturateDark) {
-      const y2 = luminance(out);
-      const k = opts.desaturateDark;
-      out = { r: y2 + (out.r - y2) * (1 - k), g: y2 + (out.g - y2) * (1 - k), b: y2 + (out.b - y2) * (1 - k) };
+      const y2 = luminance(banded);
+      const dk2 = opts.desaturateDark;
+      banded = { r: y2 + (banded.r - y2) * (1 - dk2), g: y2 + (banded.g - y2) * (1 - dk2), b: y2 + (banded.b - y2) * (1 - dk2) };
     }
-    return out;
+  } else {
+    // Light module: lift into the light band (hue-safe two-stage lift), then
+    // re-saturate to compensate for the compression of the photograph's bright
+    // tonal range into a narrow bright band.
+    const target = tones.lightFloor + (clamp255(y) / 255) * (tones.lightCap - tones.lightFloor);
+    banded = y < 24
+      ? blendTowardWhite(c, clamp((target - y) / Math.max(255 - y, 0.5), 0, 1))
+      : liftToLuminance(c, y, target);
+    if (tones.chromaBoost > 1) {
+      const y2 = luminance(banded);
+      const boost = tones.chromaBoost;
+      banded = {
+        r: clamp255(y2 + (banded.r - y2) * boost),
+        g: clamp255(y2 + (banded.g - y2) * boost),
+        b: clamp255(y2 + (banded.b - y2) * boost),
+      };
+    }
   }
 
-  // Light module: lift into the light band (hue-safe two-stage lift), then
-  // re-saturate to compensate for the compression of the photograph's bright
-  // tonal range into a narrow bright band.
-  const target = tones.lightFloor + (clamp255(y) / 255) * (tones.lightCap - tones.lightFloor);
-  let out = y < 24
-    ? blendTowardWhite(c, clamp((target - y) / Math.max(255 - y, 0.5), 0, 1))
-    : liftToLuminance(c, y, target);
-  if (tones.chromaBoost > 1) {
-    const y2 = luminance(out);
-    const k = tones.chromaBoost;
-    out = {
-      r: clamp255(y2 + (out.r - y2) * k),
-      g: clamp255(y2 + (out.g - y2) * k),
-      b: clamp255(y2 + (out.b - y2) * k),
-    };
+  // -- v3 display transform -------------------------------------------------
+  // Black-and-white intensity: 1 = pure greyscale modules (the reference look).
+  let out = banded;
+  const bw = opts.bwIntensity ?? 1;
+  if (bw < 1) out = mix(out, grayOf(out), bw);
+  if (!opts.colourTreatment) out = grayOf(out); // colour treatment OFF → strict B&W
+
+  // Image influence: blend toward the pure black/white pole. The result can
+  // only get MORE decoder-safe — poles are the extremes of the safe envelope.
+  const influence = opts.influence ?? 1;
+  if (influence < 1) {
+    const pole: RGB = opts.dark ? { r: 8, g: 8, b: 8 } : { r: 255, g: 255, b: 255 };
+    out = mix(pole, out, influence);
   }
   return out;
 }

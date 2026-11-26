@@ -63,10 +63,22 @@ export function DotsSection({
         </div>
         <p className="text-[11px] text-mute mt-1.5">{DOT_SHAPES.find((s) => s.id === dots.shape)?.hint}</p>
       </div>
-      <SliderRow label="Dot size" value={dots.size} min={0.55} max={1} step={0.01} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => set({ size: v })} />
-      <SliderRow label="Spacing" value={dots.spacing} min={0} max={0.35} step={0.01} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => set({ spacing: v })} hint="Gaps between dots — the paper shows through." />
-      <SliderRow label="Light-dot density" value={dots.density} min={0.2} max={1} step={0.05} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => set({ density: v })} hint="Fraction of light modules that keep a coloured dot. Dark dots always render — they carry the data." />
-      <SliderRow label="Colour intensity" value={dots.colorIntensity} min={0} max={1} step={0.05} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => set({ colorIntensity: v })} hint="0 = pure black & white, 1 = full photographic colour." />
+      <SliderRow label="Module size" value={dots.size} min={0.55} max={1} step={0.01} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => set({ size: v })} hint="At 88% the modules leave hairline gaps — the photograph shows through between them." />
+      <SliderRow label="Spacing" value={dots.spacing} min={0} max={0.35} step={0.01} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => set({ spacing: v })} hint="Gaps between modules — the photograph shows through." />
+      <SliderRow label="Light-dot density" value={dots.density} min={0.2} max={1} step={0.05} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => set({ density: v })} hint="Fraction of light modules that keep a dot. Dark modules always render — they carry the data." />
+      <div className="h-px bg-line" />
+      <SectionLabel>Photographic integration</SectionLabel>
+      <SliderRow label="Image influence" value={dots.influence} min={0} max={1} step={0.05} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => set({ influence: v })} hint="How much of the photograph shows through the modules themselves. 0% = pure black & white squares." />
+      <SliderRow label="Module contrast" value={dots.moduleContrast} min={0.4} max={1.4} step={0.05} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => set({ moduleContrast: v })} hint="Width of the black/white tone bands. Lower scans safer; higher keeps more photographic range." />
+      <Toggle
+        label="Colour treatment"
+        hint="Keep the photograph's hue inside the modules. Off = strict black & white, like the reference."
+        checked={dots.colourTreatment}
+        onChange={(v) => set({ colourTreatment: v, ...(v && dots.bwIntensity >= 1 ? { bwIntensity: 0.35 } : {}) })}
+      />
+      {dots.colourTreatment && (
+        <SliderRow label="Black-and-white intensity" value={dots.bwIntensity} min={0} max={1} step={0.05} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => set({ bwIntensity: v })} hint="100% = pure greyscale modules even with colour treatment on." />
+      )}
     </div>
   );
 }
@@ -83,7 +95,7 @@ export function QRSection({
         options={EC_LEVELS.map((e) => ({ id: e.id, label: e.label, hint: e.hint }))}
         onChange={(v) => set({ ecLevel: v as ECLevel })}
       />
-      <SliderRow label="Quiet zone" value={qr.quietZone} min={2} max={8} step={1} format={(v) => `${v} modules`} onChange={(v) => set({ quietZone: v })} />
+      <SliderRow label="Outer frame" value={qr.quietZone} min={2} max={8} step={1} format={(v) => `${v} modules`} onChange={(v) => set({ quietZone: v })} hint="White breathing room around the code — scanners need it. 6+ gives the reference artwork its generous frame." />
       <div>
         <SectionLabel>Matrix size</SectionLabel>
         <div className="flex flex-wrap gap-1.5">
@@ -112,6 +124,12 @@ export function QRSection({
           <code className="text-[11px] text-mute uppercase">{qr.bgColor}</code>
         </div>
       </div>
+      <Toggle
+        label="Perforation border"
+        hint="Decorative black perforation squares riding the outer frame. Removed automatically if a repair rung needs the space."
+        checked={qr.perforationBorder}
+        onChange={(v) => set({ perforationBorder: v })}
+      />
       <Toggle
         label="Transparent background"
         hint="Preview only — exports are always composited on white for verification."

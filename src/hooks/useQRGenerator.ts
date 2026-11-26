@@ -13,7 +13,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
-  CropTransform, ImageAdjustments, DotOptions, QROptions, QualityPreset,
+  CropTransform, ImageAdjustments, DotOptions, DotShape, QROptions, QualityPreset,
   MatrixInfo, ECLevel, GenerationPhase, VerificationStatus,
 } from '@/engine/types';
 import { encodeQR } from '@/engine/qrGenerator';
@@ -47,6 +47,8 @@ export interface GeneratorState {
   dotCount: number;
   url: string; // normalized, encoded URL
   geometryOverride: boolean; // repair forced dotSize 1 / spacing 0
+  ringEnabled: boolean; // whether the verified render includes the perforation ring
+  rungIndex: number; // which ladder rung produced the verified render
 }
 
 export interface GeneratorArgs {
@@ -81,17 +83,44 @@ const INITIAL: GeneratorState = {
   dotCount: 0,
   url: '',
   geometryOverride: false,
+  ringEnabled: true,
+  rungIndex: 0,
 };
 
-// Repair ladder: band escalation → geometry safety → desaturation → EC boost.
-interface AttemptSpec { repair: number; geo: boolean; ecBoost: boolean; label: string }
+// Repair ladder (v3 photographic integration): band escalation → reduced photo
+// influence → pure B&W modules → full-size square modules → decoration off →
+// EC boost. The encoded URL never changes; every rung re-renders and re-verifies
+// the ACTUAL pixels before the next escalation.
+interface AttemptSpec {
+  repair: number;
+  geo: boolean;
+  ecBoost: boolean;
+  influence?: number; // override photo influence through the modules
+  forceBW?: boolean; // force pure greyscale modules
+  forceShape?: DotShape; // force the simplest module geometry
+  ring?: boolean; // override the decorative perforation border
+  label: string;
+}
+
 const REPAIR_LADDER: AttemptSpec[] = [
   { repair: 0, geo: false, ecBoost: false, label: 'photographic tone bands' },
-  { repair: 1, geo: false, ecBoost: false, label: 'wider band separation' },
-  { repair: 2, geo: false, ecBoost: false, label: 'band separation + desaturation' },
-  { repair: 3, geo: true, ecBoost: false, label: 'full-size dots, no gaps' },
-  { repair: 4, geo: true, ecBoost: true, label: 'maximum redundancy (EC H)' },
+  { repair: 1, geo: false, ecBoost: false, influence: 0.35, label: 'wider band separation + reduced photo influence' },
+  { repair: 2, geo: false, ecBoost: false, influence: 0.2, forceBW: true, label: 'band separation + black & white modules' },
+  { repair: 2, geo: true, ecBoost: false, influence: 0.1, forceBW: true, forceShape: 'pixel', label: 'full-size square modules, no gaps' },
+  { repair: 3, geo: true, ecBoost: false, influence: 0.05, forceBW: true, forceShape: 'pixel', ring: false, label: 'decorative border off + maximum band separation' },
+  { repair: 4, geo: true, ecBoost: true, influence: 0, forceBW: true, forceShape: 'pixel', ring: false, label: 'maximum redundancy (EC H) + pure black & white' },
 ];
+
+/** Apply a ladder rung's rendering overrides to the user's dot options. */
+function rungDotOptions(base: DotOptions, spec: AttemptSpec): DotOptions {
+  return {
+    ...base,
+    influence: spec.influence ?? base.influence,
+    bwIntensity: spec.forceBW ? 1 : base.bwIntensity,
+    colourTreatment: spec.forceBW ? false : base.colourTreatment,
+    shape: spec.forceShape ?? base.shape,
+  };
+}
 
 /** Verification renders must always be opaque — jsQR cannot read transparency. */
 function opaqueRenderOpts(opts: RenderOptions): RenderOptions {
@@ -124,6 +153,7 @@ export function useQRGenerator() {
     dots: DotOptions,
     quietZone: number,
     px: number,
+    ring: boolean,
   ): Promise<{ canvas: HTMLCanvasElement; verified: boolean; decoded: string | null; reason?: string }> => {
     const canvas = renderPlanToCanvas(
       plan,
@@ -136,6 +166,8 @@ export function useQRGenerator() {
         dotSize: spec.geo ? 1 : dots.size,
         spacing: spec.geo ? 0 : dots.spacing,
         fragmentSource: plan.fragmentSource,
+        photoUnderlay: plan.underlay,
+        perforationBorder: ring,
       }),
       px,
     );
@@ -188,8 +220,12 @@ export function useQRGenerator() {
     // -- 3..7. plan → render → scene → verify, with repair ladder -------------
     setPartial({ phase: 'rendering', moduleCount: matrix.size * matrix.size, version: matrix.version });
 
-    for (const spec of REPAIR_LADDER) {
+    for (let li = 0; li < REPAIR_LADDER.length; li++) {
+      const spec = REPAIR_LADDER[li];
       if (!alive()) return;
+
+      const rungDots = rungDotOptions(args.dots, spec);
+      const ringOn = spec.ring !== false && args.qr.perforationBorder;
 
       let attemptMatrix = matrix;
       if (spec.ecBoost && matrix.ecLevel !== 'H') {
@@ -200,7 +236,7 @@ export function useQRGenerator() {
 
       let plan: DotPlan;
       try {
-        plan = buildDotPlan({ matrix: attemptMatrix, processed, dots: args.dots, preset: args.preset, repairLevel: spec.repair });
+        plan = buildDotPlan({ matrix: attemptMatrix, processed, dots: rungDots, preset: args.preset, repairLevel: spec.repair });
       } catch {
         setPartial({ phase: 'failed', status: 'failed', failureReason: 'Dot planning failed.' });
         return;
@@ -213,10 +249,12 @@ export function useQRGenerator() {
           quietZone: args.qr.quietZone,
           bgColor: '#ffffff',
           transparent: false,
-          shape: args.dots.shape,
-          dotSize: spec.geo ? 1 : args.dots.size,
-          spacing: spec.geo ? 0 : args.dots.spacing,
+          shape: rungDots.shape,
+          dotSize: spec.geo ? 1 : rungDots.size,
+          spacing: spec.geo ? 0 : rungDots.spacing,
           fragmentSource: plan.fragmentSource,
+          photoUnderlay: plan.underlay,
+          perforationBorder: ringOn,
         }),
         PREVIEW_PX,
       );
@@ -241,6 +279,8 @@ export function useQRGenerator() {
           toneWarning: plan.toneHealth.warning,
           dotCount: plan.dots.length,
           geometryOverride: spec.geo,
+          ringEnabled: ringOn,
+          rungIndex: li,
         });
         setReplayKey((k) => k + 1); // replay the assembly on every successful (re)build
         return;
@@ -268,19 +308,22 @@ export function useQRGenerator() {
     const args = argsRef.current;
     const s = stateRef.current;
     if (!args || !s.matrix || !s.plan || !s.processed) return null;
-    for (const spec of REPAIR_LADDER) {
-      if (spec.repair > 0 && spec.repair <= s.repairLevel && !spec.geo && !spec.ecBoost) continue; // already-verified strategy
+    for (let li = 0; li < REPAIR_LADDER.length; li++) {
+      const spec = REPAIR_LADDER[li];
+      if (li < s.rungIndex) continue; // rungs before the verified one already failed
       let m = s.matrix;
       if (spec.ecBoost && s.matrix.ecLevel !== 'H') {
         try { m = encodeQR(s.url, 'H', args.qr.targetVersion).matrix; } catch { /* keep */ }
       }
-      const plan = spec.repair === 0 && !spec.geo && !spec.ecBoost
-        ? s.plan
-        : buildDotPlan({ matrix: m, processed: s.processed, dots: args.dots, preset: args.preset, repairLevel: spec.repair });
+      const rungDots = rungDotOptions(args.dots, spec);
       // Keep export renders identical to what was verified: if generation needed
-      // the geometry override (full-size dots), apply it here too.
-      const dots = (s.geometryOverride || spec.geo) ? { ...args.dots, size: 1, spacing: 0 } : args.dots;
-      const { canvas, verified } = await renderAndVerify(s.url, m, plan, spec, dots, args.qr.quietZone, px);
+      // the geometry override (full-size modules), apply it here too.
+      if (s.geometryOverride || spec.geo) { rungDots.size = 1; rungDots.spacing = 0; }
+      const ringOn = spec.ring !== false && args.qr.perforationBorder;
+      const plan = li === s.rungIndex
+        ? s.plan // the exact plan that verified at generation time
+        : buildDotPlan({ matrix: m, processed: s.processed, dots: rungDots, preset: args.preset, repairLevel: spec.repair });
+      const { canvas, verified } = await renderAndVerify(s.url, m, plan, spec, rungDots, args.qr.quietZone, px, ringOn);
       if (verified) return canvas;
     }
     return null;
@@ -317,6 +360,7 @@ export function useQRGenerator() {
       spacing: s.geometryOverride ? 0 : args.dots.spacing,
       fragmentSource: s.plan.fragmentSource,
       photoSource: s.processed?.detail ?? null,
+      perforationBorder: s.ringEnabled,
       fps: 30,
       holdSeconds: 1.2,
     };
@@ -347,6 +391,7 @@ export function useQRGenerator() {
       spacing: s.geometryOverride ? 0 : args.dots.spacing,
       fragmentSource: s.plan.fragmentSource,
       photoSource: s.processed?.detail ?? null,
+      perforationBorder: s.ringEnabled,
       fps: 12,
       holdSeconds: 1.2,
     };

@@ -22,7 +22,8 @@ keep the system testable, private and honest about scanability.
 | `engine/types.ts` | Shared types: options, Dot, MatrixInfo, DotPlan, VerificationStatus, DecodeResult |
 | `engine/qrGenerator.ts` | URL → genuine QR matrix (`qrcode-generator`), ISO 18004 function-module mask, version buckets, minimum-version probe |
 | `engine/imageProcessor.ts` | Saliency smart crop, tone adjustments (brightness/contrast/saturation), percentile auto-contrast, CLAHE, unsharp mask; N×N module sampling; high-res detail canvas for fragment dots |
-| `engine/dotRenderer.ts` | Luminance-band tone mapping (hue-preserving); dot planning (density selection); static rasterization; tone-safe fragment detail; N² raw photo colours on the plan |
+| `engine/dotRenderer.ts` | Luminance-band tone mapping input; dot planning (density selection + bright-photo drop rule); five-layer composite rasterization (photo underlay → structural squares → B&W modules → perforation ring); tone-safe fragment detail; N² raw photo colours on the plan |
+| `utils/contrastOptimizer.ts` | Band mapping + the v3 display transform (image influence, module contrast, B&W intensity, colour treatment) → final module colours |
 | `engine/particleEngine.ts` | Particle scene (one particle per visible module carrying raw photo + final QR colours); photo → scatter → assemble timeline; scene drawing |
 | `engine/qrVerifier.ts` | jsQR decoding (Web Worker + main-thread fallback), URL comparison, canvas verification |
 | `engine/animationFrames.ts` | `FrameSource` — the common input for video/GIF exporters |
@@ -46,18 +47,19 @@ processImage(img, crop, N, adjustments, enhance)
   │ smart crop → LUTs → auto-contrast → CLAHE → unsharp → N×N resample
   │                                          → { sample (N×N), detail (high-res), stats }
   ▼
-buildDotPlan({ matrix, processed, dots, preset, repairLevel, colorIntensity, enhance })
-  │ sampleModuleColors → mapModuleColor (band mapping) → toneHealth → density
-  │                           → { dots[], photoColors (N² raw samples), toneHealth, fragmentSource }
+buildDotPlan({ matrix, processed, dots, preset, repairLevel, influence, moduleContrast,
+               bwIntensity, colourTreatment })
+  │ sampleModuleColors → mapModuleColor (band mapping + pole blend) → toneHealth → density
+  │                           → { dots[], underlay, photoColors (N² raw samples), toneHealth, fragmentSource }
   ▼
-renderPlanToCanvas(plan, matrix, renderOpts, px)     → static PNG-identical frame
+renderPlanToCanvas(plan, matrix, renderOpts, px)  → static frame (5 composite layers + ring)
   ▼
 createScene(plan, matrix, canvasSize, quietZone, controls) → ParticleScene
   ▼
 verifyCanvas(staticCanvas, url)  → jsQR (worker) → { ok, text } → compareUrls
   │
   ├─ verified → status VERIFIED, downloads enabled, replay animation
-  └─ failed   → repair ladder (see qr-engine.md) → re-render → re-verify
+  └─ failed   → repair ladder (6 rungs, see qr-engine.md) → re-render → re-verify
 ```
 
 Exports reuse the same primitives: each export resolution renders its own canvas
@@ -73,6 +75,11 @@ For a matrix of size `N` with quiet zone `q` on a square canvas of side `S`:
 - dot diameter `d = mp · clamp(dotSize − spacing, 0.25, 1)`
 - fragment patches are module-aligned crops from the high-res detail canvas
   (detail resolution `clamp(N·24, 256, 2048)`), inset 0.4 px at detail scale
+- v3 composite: the photograph underlay is cover-fit into the grid rectangle
+  only (the outer frame stays white); data modules are squares of
+  `dotSize − spacing` pitch; the perforation ring rides the quiet-zone
+  centreline at ±(q/2)·mp with 0.24·mp squares (4(N+q) of them), gated to
+  q ≥ 3 and opaque backgrounds
 - tone mapping is band-based: dark modules → `[darkLo, darkCap]`, light modules
   → `[lightFloor, lightCap]`, hue preserved by proportional RGB scaling
   (`mapModuleColor` in `utils/contrastOptimizer.ts`)
@@ -106,7 +113,9 @@ performance-critical decision into DOM-free functions:
 
 - `buildDotPlanFromSamples()` — the entire dot planner, taking pre-sampled
   colours/luminance instead of a canvas.
-- A `scripts/pngkit.mjs` rasterizer mirrors `renderDotQR` geometry exactly.
+- A `scripts/pngkit.mjs` rasterizer mirrors `renderDotQR` geometry exactly —
+  including the full five-layer v3 composite and the exported `ringSquares()`
+  ring geometry (zero mirror drift).
 - `scripts/test-engine.ts` then encodes → plans → rasterizes → jsQR-decodes in
   Node, exercising the same code paths the browser uses.
 

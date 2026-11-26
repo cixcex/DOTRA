@@ -235,13 +235,16 @@ export function sampleImage(img, u, v) {
 export function drawCover(dst, src, dx, dy, size) {
   const scale = Math.max(size / src.w, size / src.h);
   const dw = src.w * scale, dh = src.h * scale;
-  const offX = dx + (size - dw) / 2, offY = dy + (size - dh) / 2;
+  const offX = (size - dw) / 2, offY = (size - dh) / 2;
+  // integer destination origin — setPx is a typed-array write and silently
+  // no-ops on float coordinates
+  const ix = Math.floor(dx), iy = Math.floor(dy);
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      const u = (x + 0.5 - (size - dw) / 2) / dw;
-      const v = (y + 0.5 - (size - dh) / 2) / dh;
+      const u = (x + 0.5 - offX) / dw;
+      const v = (y + 0.5 - offY) / dh;
       const [r, g, b] = sampleImage(src, u, v);
-      setPx(dst, dx + x, dy + y, r, g, b);
+      setPx(dst, ix + x, iy + y, r, g, b);
     }
   }
 }

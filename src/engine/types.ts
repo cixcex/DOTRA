@@ -48,15 +48,21 @@ export interface DotOptions {
   spacing: number; // 0 .. 0.35 — gap fraction of a module between dots
   density: number; // 0 .. 1 — fraction of light modules that keep a coloured dot
   colorIntensity: number; // 0 .. 1 — how strongly dot colours deviate from B/W
+  // Photographic integration (v3)
+  influence: number; // 0 .. 1 — photograph visible THROUGH the modules (0 = pure B/W squares)
+  moduleContrast: number; // 0.4 .. 1.4 — band width: lower = safer, higher = more tonal range
+  bwIntensity: number; // 0 .. 1 — desaturation of the photo contribution inside modules
+  colourTreatment: boolean; // keep the photograph's hue inside modules (default: black & white)
 }
 
 /** Structural QR options. */
 export interface QROptions {
   ecLevel: ECLevel;
-  quietZone: number; // modules, 2..8
+  quietZone: number; // modules, 2..8 — the white outer frame
   targetVersion: TargetVersion;
   bgColor: string; // CSS colour for the quiet zone / background
   transparentBackground: boolean;
+  perforationBorder: boolean; // decorative black perforation ring on the frame
 }
 
 /** Quality presets balance image resemblance vs scan reliability. */

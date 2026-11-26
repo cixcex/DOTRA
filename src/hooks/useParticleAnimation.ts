@@ -49,6 +49,8 @@ export function useParticleAnimation(args: AnimationDriverArgs) {
       dotSize: s.renderOpts.dotSize,
       spacing: s.renderOpts.spacing,
       fragmentSource: s.renderOpts.fragmentSource ?? null,
+      photoUnderlay: s.renderOpts.photoUnderlay ?? null,
+      perforationBorder: s.renderOpts.perforationBorder ?? false,
     });
     ctx.clearRect(0, 0, size, size);
     ctx.drawImage(sc, 0, 0, size, size);
@@ -112,6 +114,7 @@ function makeDrawOpts(s: AnimationDriverArgs) {
     shape: s.renderOpts.shape,
     fragmentSource: s.renderOpts.fragmentSource ?? null,
     photoSource: s.photoSource ?? null,
+    perforationBorder: s.renderOpts.perforationBorder ?? false,
     plan: s.plan!,
     matrix: s.matrix!,
     quietZone: s.renderOpts.quietZone,
@@ -130,6 +133,8 @@ function makeDrawOpts(s: AnimationDriverArgs) {
       dotSize: s.renderOpts.dotSize,
       spacing: s.renderOpts.spacing,
       fragmentSource: s.renderOpts.fragmentSource ?? null,
+      photoUnderlay: s.renderOpts.photoUnderlay ?? null,
+      perforationBorder: s.renderOpts.perforationBorder ?? false,
     },
   };
 }

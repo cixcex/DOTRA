@@ -54,8 +54,8 @@ The Node harness asserts the mask against a hand-computed v2 expectation
    0.45); chroma is untouched, so edges pop without noisy dots.
 
 The pipeline emits the N×N `sample` canvas (one colour per module) and the
-high-res `detail` canvas (`clamp(N·24, 256, 2048)`) for fragment dots and the
-animation's opening photo frame.
+high-res `detail` canvas (`clamp(N·24, 256, 2048)`) for fragment dots, the v3
+photographic underlay and the animation's opening photo frame.
 
 ## 4. Tone bands — the core of photographic fidelity
 
@@ -77,6 +77,23 @@ tonal range.
 `colorIntensity = 0` gives pure greyscale dots; `1` gives full photographic
 colour. Higher `repairLevel` narrows the bands and (level ≥ 2) desaturates dark
 dots toward neutral.
+
+### The v3 display transform (photographic blend)
+
+After band mapping, the module's final display colour is computed at plan time:
+
+1. `bwIntensity` mixes the band colour toward its own gray.
+2. When colour treatment is off, the module is strictly grayscale.
+3. The result is blended toward the pole of its band:
+   `final = lerp(pole, colour, influence)`, with poles at the envelope extremes
+   (dark ≈ 8, light ≈ 255).
+
+Because the poles *are* the band-envelope extremes, **every influence, contrast
+and B&W setting is scan-safe by construction** — blending can only push a module
+toward pure black or pure white, never across the decoder-safe gap.
+`moduleContrast` scales the band width around its centre, hard-clamped to the
+safe envelope (dark cap ≤ 160, light floor ≥ 215). Protected (structural)
+modules bypass the transform and render as pure poles.
 
 ### Empirical calibration (why the light floor is high)
 
@@ -101,7 +118,35 @@ Repair ladder bands: `{6–100, 238–251} → {5–84, 242–252} → {4–70, 
 `analyzeToneHealth()` reports what fraction of each population was compressed
 into its band and warns for near-white, near-black or flat images.
 
-## 5. Fragment dots
+## 5. The photographic composite (v3 rendering model)
+
+`renderDotQR` paints five layers, back to front:
+
+1. **White background** — the QR canvas starts opaque white; the outer frame
+   stays clean.
+2. **Photographic underlay** — the processed photograph (`DotPlan.underlay`) is
+   cover-fit into the module-grid rectangle only, so the photograph fills the
+   entire composition beneath the modules while the frame keeps its generous
+   white margin.
+3. **Structural squares** — finder, separator, timing, alignment, format and
+   version modules as pure black/white squares (module pitch + 0.6 px overlap).
+   Scanner-critical geometry is never decorated.
+4. **Data modules** — tiny black-and-white squares (default 0.88 × module pitch
+   with a 0.02 hairline spacing), each coloured by the §4 display transform:
+   `final = lerp(pole, bandColour, influence)`. The hairline gaps between
+   modules expose the raw photograph — detail is visible *between* modules, and
+   the influence blend shows it *through* them.
+5. **Perforation ring** (optional) — `ringSquares()` places 0.24 × module-pitch
+   black squares centred on the quiet-zone midline (q/2 · mp outside the grid,
+   4(N+q) squares, centreline at the frame's middle); gated to quiet zone ≥ 3
+   and opaque backgrounds so ≥ 1.3 modules of clean white always separate it
+   from the grid.
+
+The same geometry feeds the particle animation (underlay fades out for the
+scatter, fades back in during converge; ring materialises after u > 0.88) and
+the Node harness rasterizer — one exported pure function, zero mirror drift.
+
+## 6. Fragment dots
 
 "Fragment" renders the actual image crop inside each module. Raw patches bypass
 tone clamping, so DOTRA builds a **tone-safe detail canvas**
@@ -113,7 +158,7 @@ dots use a tighter band — dark cap `min(darkCap, 96)`, light floor
 binarization on textured patches (a textured block drifts the local threshold
 more than a flat dot).
 
-## 6. Verification contract
+## 7. Verification contract
 
 `verifyCanvas(canvas, expectedUrl)`:
 
@@ -127,23 +172,23 @@ The same contract runs before **every** download: PNG at 1024/2048/4096 px, vide
 at 1080 px, GIF at 480 px. Each resolution rasterizes independently (anti-aliasing
 behaves differently at different sizes), so each is verified on its own pixels.
 
-## 7. Repair ladder
+## 8. Repair ladder
 
 Tried in order; the first verified render wins. Labels appear in the UI attempt log.
 
 | # | Strategy | Changes |
 | --- | --- | --- |
-| 1 | Photographic tone bands | — (the chosen mode's bands) |
-| 2 | Wider band separation | dark cap 100 / light floor 238 |
-| 3 | + Desaturation | as above, dark dots desaturated |
-| 4 | Full-size dots, no gaps | `dotSize → 1`, `spacing → 0` |
-| 5 | Maximum redundancy | as above + matrix re-encoded at EC level H |
+| 1 | Wider band separation | dark cap 100 / light floor 238; image influence → 0.35 |
+| 2 | + Black & white modules | influence → 0.2, strict grayscale tone |
+| 3 | + Full-size square modules | `dotSize → 1`, `spacing → 0`, shape → square; influence → 0.1 |
+| 4 | + Perforation ring off | decorative ring disabled; influence → 0.05, repair-3 bands |
+| 5 | Maximum redundancy | as above + matrix re-encoded at EC level H; influence → 0 |
 
 The encoded URL is identical at every rung. If the ladder is exhausted, the app
 reports the failure honestly (including "decoded to a different link" when the
 payload mismatched) and keeps downloads disabled.
 
-## 8. Photograph → QR animation
+## 9. Photograph → QR animation
 
 `particleEngine` renders one particle per visible module, each carrying **both**
 its raw sampled photograph colour and its final tone-banded QR colour:
@@ -160,10 +205,14 @@ its raw sampled photograph colour and its final tone-banded QR colour:
 - **Settle** and hold; at `u ≥ 1` the engine delegates to the static renderer —
   the final animation frame is pixel-identical to the verified downloadable QR.
 
+v3 composite timeline: the photographic underlay fades out for the scatter
+(u < 0.2), fades back in during converge (u 0.55–0.85) so modules assemble *on*
+the photograph, and the perforation ring materialises last (u > 0.88).
+
 MP4/GIF exporters receive the same `FrameSource` (including the photo underlay),
 so exported videos open on the photograph too.
 
-## 9. What is *not* done (by design)
+## 10. What is *not* done (by design)
 
 - No module is "repainted" for aesthetics after calibration — dark/light values
   only move along the repair ladder.

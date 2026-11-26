@@ -11,9 +11,11 @@ import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import jsQR from 'jsqr';
 import { encodeQR } from '../src/engine/qrGenerator';
+import { ringSquares } from '../src/engine/dotRenderer';
+import { mapModuleColor } from '../src/utils/contrastOptimizer';
 import {
   makeImage, savePNG, fillRect, fillCircle, forEachPixel, getPx, setPx,
-  gradient, mixc, clamp255, mulberry32, makeNoise2D,
+  gradient, mixc, clamp255, mulberry32, makeNoise2D, drawCover,
 } from './pngkit.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -79,21 +81,19 @@ function makeArtwork(size: number) {
   return img;
 }
 
-// --- dot-QR rasteriser (mirrors the browser engine's geometry) -------------------
-interface RenderCell { x: number; y: number; r: number; color: number[]; structural: boolean; dark: boolean }
+// --- dot-QR rasteriser (uses the ENGINE's real tone mapper + ring geometry) -----
+interface RenderCell { x: number; y: number; half: number; color: number[]; structural: boolean; dark: boolean }
 
 function buildDotCells(url: string, artwork: Img, outSize: number) {
-  const { matrix } = encodeQR(url, 'M', 'auto');
+  const { matrix } = encodeQR(url, 'H', 'auto');
   const N = matrix.size;
-  const quiet = 4;
+  const quiet = 6;
   const total = N + quiet * 2;
   const modulePx = outSize / total;
   const origin = quiet * modulePx;
   const artScale = artwork.w / N;
 
-  const luma = (c: number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
   const cells: RenderCell[] = [];
-
   for (let r = 0; r < N; r++) {
     for (let c = 0; c < N; c++) {
       const ax = Math.min(artwork.w - 1, Math.floor(c * artScale));
@@ -105,36 +105,35 @@ function buildDotCells(url: string, artwork: Img, outSize: number) {
       if (structural) {
         cells.push({
           x: origin + (c + 0.5) * modulePx, y: origin + (r + 0.5) * modulePx,
-          r: modulePx / 2, color: dark ? [10, 10, 10] : [255, 255, 255], structural: true, dark,
+          half: (modulePx + 0.6) / 2, color: dark ? [10, 10, 10] : [255, 255, 255], structural: true, dark,
         });
         continue;
       }
-      // luminance-constrained colour mapping (balanced preset tones;
-      // light floor 238 is required for jsQR's local binarization)
-      let out = col;
-      const Y = luma(col);
-      if (dark) {
-        if (Y > 105) { const k = 105 / Y; out = [col[0] * k, col[1] * k, col[2] * k]; }
-      } else if (Y < 238) {
-        const t = (238 - Y) / (255 - Y);
-        out = [col[0] + (255 - col[0]) * t, col[1] + (255 - col[1]) * t, col[2] + (255 - col[2]) * t];
-      }
+      // identical tone-band + influence blend as the browser engine
+      // (photo preset, black & white modules, 60% image influence)
+      const mapped = mapModuleColor({ r: col[0], g: col[1], b: col[2] }, {
+        dark, protectedModule: false, preset: 'photo', colorIntensity: 1, repairLevel: 0,
+        influence: 0.6, moduleContrast: 0.85, bwIntensity: 1, colourTreatment: false,
+      });
       cells.push({
         x: origin + (c + 0.5) * modulePx, y: origin + (r + 0.5) * modulePx,
-        r: modulePx * 0.44, color: out.map(clamp255), structural: false, dark,
+        half: modulePx * 0.44, color: [mapped.r, mapped.g, mapped.b].map(clamp255), structural: false, dark,
       });
     }
   }
-  return { cells, N, modulePx, origin, quiet, total };
+  return { cells, N, modulePx, origin, quiet, total, artwork };
 }
 
 function paintCells(img: Img, built: ReturnType<typeof buildDotCells>, offX = 0, offY = 0) {
+  // photographic underlay beneath the module grid (full-bleed, cover-fit)
+  drawCover(img, built.artwork, offX + built.origin, offY + built.origin, built.N * built.modulePx);
+  // structural + data modules as precise squares
   for (const cell of built.cells) {
-    if (cell.structural) {
-      fillRect(img, offX + cell.x - built.modulePx / 2, offY + cell.y - built.modulePx / 2, built.modulePx + 0.6, built.modulePx + 0.6, cell.color);
-    } else {
-      fillCircle(img, offX + cell.x, offY + cell.y, cell.r, cell.color);
-    }
+    fillRect(img, offX + cell.x - cell.half, offY + cell.y - cell.half, cell.half * 2, cell.half * 2, cell.color);
+  }
+  // decorative perforation ring (engine geometry — no mirror drift)
+  for (const s of ringSquares(built.N, built.quiet, built.modulePx, built.origin)) {
+    fillRect(img, offX + s.x - s.size / 2, offY + s.y - s.size / 2, s.size, s.size, [22, 22, 22]);
   }
 }
 

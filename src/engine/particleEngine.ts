@@ -25,6 +25,7 @@
 
 import type { AnimationPreset, DotShape, EasingStyle, MatrixInfo, RGB } from './types';
 import type { DotPlan } from './dotRenderer';
+import { drawPerforationRing } from './dotRenderer';
 import { colorBucket, cssRgb, clamp } from '@/utils/colorUtils';
 
 export interface ParticleControls {
@@ -333,6 +334,8 @@ export interface SceneDrawOptions extends SceneRenderOptions {
   easing: EasingStyle;
   /** Smoothed source photograph, crossfaded under the opening photo phase. */
   photoSource?: HTMLCanvasElement | null;
+  /** Decorative perforation ring (fades in with the settle). */
+  perforationBorder?: boolean;
   renderStatic: (
     canvas: HTMLCanvasElement,
     plan: DotPlan,
@@ -345,6 +348,8 @@ export interface SceneDrawOptions extends SceneRenderOptions {
       dotSize: number;
       spacing: number;
       fragmentSource?: HTMLCanvasElement | null;
+      photoUnderlay?: HTMLCanvasElement | null;
+      perforationBorder?: boolean;
     },
   ) => void;
   staticCanvas: HTMLCanvasElement;
@@ -356,6 +361,8 @@ export interface SceneDrawOptions extends SceneRenderOptions {
     dotSize: number;
     spacing: number;
     fragmentSource?: HTMLCanvasElement | null;
+    photoUnderlay?: HTMLCanvasElement | null;
+    perforationBorder?: boolean;
   };
 }
 
@@ -390,9 +397,12 @@ export function drawSceneFrame(ctx: CanvasRenderingContext2D, scene: ParticleSce
   const fragmentSource = o.fragmentSource;
   const N = scene.matrixSize;
 
-  // -- opening photograph underlay (crossfades out as particles form) ---------
-  if (o.photoSource && u < 0.2) {
-    const a = 1 - smooth01((u - 0.02) / 0.13);
+  // -- photograph underlay: fades out as the photo tiles lift off, fades back
+  // in while the particles converge, so the assembled modules land on the photo
+  if (o.photoSource) {
+    let a = 0;
+    if (u < 0.2) a = 1 - smooth01((u - 0.02) / 0.13); // opening photo phase
+    else a = smooth01((u - 0.55) / 0.3); // return beneath the assembling modules
     if (a > 0.001) {
       ctx.globalAlpha = a;
       ctx.imageSmoothingEnabled = true;
@@ -520,6 +530,13 @@ export function drawSceneFrame(ctx: CanvasRenderingContext2D, scene: ParticleSce
         ctx.fill();
       }
     }
+  }
+
+  // -- perforation ring materialises with the final settle --------------------
+  if (o.perforationBorder && scene.quietZone >= 3 && u > 0.88) {
+    ctx.globalAlpha = smooth01((u - 0.88) / 0.08);
+    drawPerforationRing(ctx, N, scene.quietZone, modulePx, scene.origin);
+    ctx.globalAlpha = 1;
   }
 
   ctx.globalAlpha = 1;

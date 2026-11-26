@@ -23,6 +23,8 @@ export interface FrameSource {
   fragmentSource: HTMLCanvasElement | null;
   /** Smoothed source photograph for the opening photo phase of the animation. */
   photoSource?: HTMLCanvasElement | null;
+  /** Decorative perforation ring on the white frame. */
+  perforationBorder?: boolean;
   fps: number;
   holdSeconds: number;
 }
@@ -43,6 +45,7 @@ export function renderAnimationFrame(canvas: HTMLCanvasElement, src: FrameSource
     shape: src.shape,
     fragmentSource: src.fragmentSource,
     photoSource: src.photoSource ?? null,
+    perforationBorder: src.perforationBorder ?? false,
     plan: src.plan,
     matrix: src.matrix,
     quietZone: src.quietZone,
@@ -61,6 +64,8 @@ export function renderAnimationFrame(canvas: HTMLCanvasElement, src: FrameSource
       dotSize: src.dotSize,
       spacing: src.spacing,
       fragmentSource: src.fragmentSource,
+      photoUnderlay: src.photoSource ?? null,
+      perforationBorder: src.perforationBorder ?? false,
     } as RenderOptions,
   };
   drawOpts.staticCanvas.width = canvas.width;

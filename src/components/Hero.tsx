@@ -37,7 +37,7 @@ function HeroDemo() {
         });
         if (cancelled) return;
 
-        const matrix = encodeQR(HERO_DEMO_URL, 'M', 'large').matrix;
+        const matrix = encodeQR(HERO_DEMO_URL, 'H', 'large').matrix;
         const processed = processImage(
           img,
           {
@@ -50,18 +50,20 @@ function HeroDemo() {
         const plan = buildDotPlan({
           matrix,
           processed,
-          dots: { shape: 'circle', size: 0.78, spacing: 0.13, density: 1, colorIntensity: 1 },
+          dots: { shape: 'pixel', size: 0.88, spacing: 0.02, density: 1, colorIntensity: 1, influence: 0.6, moduleContrast: 0.85, bwIntensity: 1, colourTreatment: false },
           preset: 'balanced',
           repairLevel: 0,
         });
-        const scene = createScene(plan, matrix, PREVIEW_PX, 4, {
+        const scene = createScene(plan, matrix, PREVIEW_PX, 6, {
           preset: 'gather', duration: 3.4, speed: 1, intensity: 0.55, startDistance: 1, easing: 'easeOut',
         });
 
-        // Verify the exact static frame jsQR would see.
+        // Verify the exact static frame jsQR would see — the same photographic
+        // composite (underlay + square modules + perforation ring) as the export.
         const staticCanvas = renderPlanToCanvas(plan, matrix, {
-          quietZone: 4, bgColor: '#ffffff', transparent: false,
-          shape: 'circle', dotSize: 0.78, spacing: 0.13, fragmentSource: plan.fragmentSource,
+          quietZone: 6, bgColor: '#ffffff', transparent: false,
+          shape: 'pixel', dotSize: 0.88, spacing: 0.02, fragmentSource: plan.fragmentSource,
+          photoUnderlay: processed.detail, perforationBorder: true,
         }, 540);
         const outcome = await verifyCanvas(staticCanvas, HERO_DEMO_URL);
 
@@ -85,13 +87,15 @@ function HeroDemo() {
     plan,
     matrix,
     renderOpts: {
-      quietZone: 4,
+      quietZone: 6,
       bgColor: '#ffffff',
       transparent: false,
-      shape: 'circle',
-      dotSize: 0.78,
-      spacing: 0.13,
+      shape: 'pixel',
+      dotSize: 0.88,
+      spacing: 0.02,
       fragmentSource: plan?.fragmentSource ?? null,
+      photoUnderlay: photoSrc,
+      perforationBorder: true,
     },
     photoSource: photoSrc,
     easing: 'easeOut',
@@ -107,7 +111,7 @@ function HeroDemo() {
         width={PREVIEW_PX}
         height={PREVIEW_PX}
         className="w-full h-auto rounded-xl border border-line bg-white shadow-lift"
-        aria-label="Live DOTRA demo: a QR code assembling from coloured dots"
+        aria-label="Live DOTRA demo: a QR code assembling from black-and-white square modules over the photograph"
       />
       <div className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-white/90 backdrop-blur border border-line px-2.5 py-1 text-[11px] font-medium text-ink shadow-card">
         {verified === null && !failed && <span className="w-1.5 h-1.5 rounded-full bg-neutral-300 anim-pulse-dot" />}

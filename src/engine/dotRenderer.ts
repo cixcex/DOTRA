@@ -11,6 +11,7 @@
 // ---------------------------------------------------------------------------
 
 import type { Dot, DotOptions, MatrixInfo, QualityPreset, RGB } from './types';
+// (QualityPreset re-exported for callers via contrastOptimizer types)
 import { mapModuleColor, analyzeToneHealth, PRESET_TONES, REPAIR_TONES, type ToneHealth } from '@/utils/contrastOptimizer';
 import { colorBucket, cssRgb, liftToLuminance, scaleToLuminance } from '@/utils/colorUtils';
 import { sampleModuleColors, type ProcessedImage } from './imageProcessor';
@@ -26,6 +27,8 @@ export interface DotPlan {
   photoColors: RGB[];
   /** Tone-safe copy of the detail image for fragment dots (null in DOM-less contexts). */
   fragmentSource: HTMLCanvasElement | null;
+  /** The processed photograph, drawn full-bleed beneath the module grid. */
+  underlay: HTMLCanvasElement | null;
 }
 
 export interface BuildPlanOptions {
@@ -67,8 +70,13 @@ export function buildDotPlanFromSamples(inputs: BuildPlanOptions & ModuleSamples
 
   // Density: choose which light modules keep a coloured dot.
   // Deterministic ranking by "visual information" (chroma + distance from bg).
+  // v3 photographic rule: a dropped light module reveals the photograph beneath
+  // it, so a module is only droppable when that photograph is bright enough to
+  // still read as a light module (sample luma >= 200). Over dark photography
+  // every light module keeps its dot — density can never corrupt data this way.
   const lightIndices: number[] = [];
   const lightScore: number[] = [];
+  const droppable: number[] = [];
   for (let r = 0; r < N; r++) {
     for (let c = 0; c < N; c++) {
       if (matrix.isDark(r, c)) continue;
@@ -78,17 +86,22 @@ export function buildDotPlanFromSamples(inputs: BuildPlanOptions & ModuleSamples
       const score = mx - mn + Math.abs(luma[i] - 250) * 0.35;
       lightIndices.push(i);
       lightScore.push(score);
+      if (luma[i] >= 200) droppable.push(i);
     }
   }
-  const keepCount = Math.round(lightIndices.length * dots.density);
   const keep = new Uint8Array(N * N);
-  if (keepCount >= lightIndices.length) {
-    keep.fill(1);
-  } else {
-    const order = lightIndices
-      .map((idx, k) => k)
-      .sort((a, b) => lightScore[b] - lightScore[a] || lightIndices[a] - lightIndices[b]);
-    for (let k = 0; k < keepCount; k++) keep[lightIndices[order[k]]] = 1;
+  // Light modules over dark/mid photography always keep their dot.
+  for (const i of lightIndices) keep[i] = luma[i] >= 200 ? 0 : 1;
+  if (droppable.length > 0) {
+    const keepCount = Math.round(droppable.length * dots.density);
+    if (keepCount >= droppable.length) {
+      for (const i of droppable) keep[i] = 1;
+    } else {
+      const order = droppable
+        .map((idx, k) => k)
+        .sort((a, b) => lightScore[droppable[b]] - lightScore[droppable[a]] || droppable[a] - droppable[b]);
+      for (let k = 0; k < keepCount; k++) keep[droppable[order[k]]] = 1;
+    }
   }
 
   // Data-module dots (function modules are rendered separately by the renderer).
@@ -106,6 +119,10 @@ export function buildDotPlanFromSamples(inputs: BuildPlanOptions & ModuleSamples
         colorIntensity: dots.colorIntensity,
         repairLevel,
         desaturateDark: repairLevel >= 2 ? 0.35 : 0,
+        influence: dots.influence,
+        moduleContrast: dots.moduleContrast,
+        bwIntensity: dots.bwIntensity,
+        colourTreatment: dots.colourTreatment,
       });
       dotList.push({ col: c, row: r, dark, protectedModule: false, color });
     }
@@ -117,7 +134,9 @@ export function buildDotPlanFromSamples(inputs: BuildPlanOptions & ModuleSamples
 
   // Fragment dots paste raw image patches — build a tone-safe copy so every
   // patch respects the same luminance constraints as the mapped dot colours.
-  const detail = inputs.detail ?? (opts_processed_detail(inputs));
+  // The same canvas is drawn full-bleed beneath the module grid as the
+  // photographic underlay.
+  const detail = inputs.detail ?? inputs.processed?.detail ?? null;
   const fragmentSource = detail ? buildClampedDetail(detail, N, darkFlags, effectiveTones, dots.colorIntensity, repairLevel >= 2 ? 0.35 : 0) : null;
 
   return {
@@ -129,11 +148,8 @@ export function buildDotPlanFromSamples(inputs: BuildPlanOptions & ModuleSamples
     moduleCount: N * N,
     photoColors: colors,
     fragmentSource,
+    underlay: detail,
   };
-}
-
-function opts_processed_detail(inputs: BuildPlanOptions & ModuleSamples & { detail?: HTMLCanvasElement | null }): HTMLCanvasElement | null {
-  return (inputs as BuildPlanOptions).processed?.detail ?? null;
 }
 
 /** Browser path: sample colours from the processed canvas, then plan. */
@@ -250,6 +266,43 @@ export interface RenderOptions {
   dotSize: number; // fraction of module
   spacing: number; // gap fraction of module between dots
   fragmentSource?: HTMLCanvasElement | null; // high-res image for fragment dots
+  photoUnderlay?: HTMLCanvasElement | null; // photograph drawn full-bleed beneath the module grid
+  perforationBorder?: boolean; // decorative black perforation ring on the white frame
+}
+
+// --- decorative perforation ring ---------------------------------------------
+
+/**
+ * Small black squares riding the midline of the white outer frame — the
+ * perforation-style border of the photographic QR artwork. Pure geometry
+ * (DOM-free) so the Node harness mirrors it exactly.
+ * Gate: quietZone >= 3 so the ring always keeps ≥ 1.3 modules of clean white
+ * between itself and the module grid (decoder quiet-zone safety).
+ */
+export function ringSquares(N: number, quietZone: number, modulePx: number, origin: number): { x: number; y: number; size: number }[] {
+  const size = modulePx * 0.24;
+  const start = origin - (quietZone / 2) * modulePx; // ring centreline (top/left)
+  const span = (N + quietZone) * modulePx;
+  const end = start + span;
+  const count = N + quietZone;
+  const squares: { x: number; y: number; size: number }[] = [];
+  for (let i = 0; i < count; i++) {
+    const t = start + (i + 0.5) * modulePx;
+    squares.push({ x: t, y: start, size }); // top
+    squares.push({ x: t, y: end, size }); // bottom
+    squares.push({ x: start, y: t, size }); // left
+    squares.push({ x: end, y: t, size }); // right
+  }
+  return squares;
+}
+
+/** Paint the perforation ring (near-black squares) onto a render context. */
+export function drawPerforationRing(ctx: CanvasRenderingContext2D, N: number, quietZone: number, modulePx: number, origin: number): void {
+  const squares = ringSquares(N, quietZone, modulePx, origin);
+  if (!squares.length) return;
+  ctx.fillStyle = '#161616';
+  const half = squares[0].size / 2;
+  for (const s of squares) ctx.fillRect(s.x - half, s.y - half, s.size, s.size);
 }
 
 interface Geometry {
@@ -313,9 +366,18 @@ function getSprite(shape: 'circle' | 'rounded' | 'soft', d: number, color: RGB):
 }
 
 /**
- * Render a complete dot-QR onto `canvas`. Canvas dimensions define output res.
- * This exact function is also used for every animation frame (t = 1 state),
- * which guarantees the animation's final frame matches the exported PNG.
+ * Render a complete photographic dot-QR onto `canvas`. Canvas dimensions define
+ * output res. Layers, back to front:
+ *   1. white frame / quiet zone
+ *   2. the photograph, full-bleed beneath the module grid
+ *   3. structural modules — pure black/white solid squares (sacred)
+ *   4. data modules — precisely aligned squares (or the chosen dot shape),
+ *      coloured by the band mapping + influence blend
+ *   5. optional decorative perforation ring on the white frame
+ *
+ * This exact function is also used for every animation's final frame (u >= 1
+ * delegation) and every export, which guarantees the animation's last frame and
+ * the exported PNG are pixel-identical.
  */
 export function renderDotQR(
   canvas: HTMLCanvasElement,
@@ -330,7 +392,7 @@ export function renderDotQR(
   const mp = geo.modulePx;
   const ox = geo.origin, oy = geo.origin;
 
-  // Background / quiet zone
+  // -- Layer 0: background / quiet zone ---------------------------------------
   if (opts.transparent) {
     ctx.clearRect(0, 0, S, S);
   } else {
@@ -338,7 +400,18 @@ export function renderDotQR(
     ctx.fillRect(0, 0, S, S);
   }
 
-  // -- Pass 1: structural modules as solid squares (pure black / white) ------
+  // -- Layer 1: photographic underlay, full-bleed under the module grid ------
+  if (opts.photoUnderlay) {
+    const uw = opts.photoUnderlay.width, uh = opts.photoUnderlay.height;
+    const gw = N * mp, gh = N * mp;
+    const k = Math.max(gw / uw, gh / uh);
+    const sw = gw / k, sh = gh / k;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(opts.photoUnderlay, (uw - sw) / 2, (uh - sh) / 2, sw, sh, ox, oy, gw, gh);
+  }
+
+  // -- Layer 2: structural modules as solid squares (pure black / white) -----
   ctx.fillStyle = '#0a0a0a';
   for (let r = 0; r < N; r++) {
     for (let c = 0; c < N; c++) {
@@ -354,7 +427,26 @@ export function renderDotQR(
     }
   }
 
-  // -- Pass 2: data module dots ----------------------------------------------
+  // -- Layer 3: data modules --------------------------------------------------
+  paintDataModules(ctx, plan, opts, geo, N, ox, oy);
+
+  // -- Layer 4: decorative perforation ring on the white frame ---------------
+  if (opts.perforationBorder && !opts.transparent && opts.quietZone >= 3) {
+    drawPerforationRing(ctx, N, opts.quietZone, mp, ox);
+  }
+}
+
+/** Data-module painting (squares for the photographic look; dots otherwise). */
+function paintDataModules(
+  ctx: CanvasRenderingContext2D,
+  plan: DotPlan,
+  opts: RenderOptions,
+  geo: Geometry,
+  N: number,
+  ox: number,
+  oy: number,
+): void {
+  const mp = geo.modulePx;
   const d = geo.dotDiameter;
   const half = d / 2;
 
@@ -375,29 +467,26 @@ export function renderDotQR(
     return;
   }
 
-  if (opts.shape === 'fragment') {
+  if (opts.shape === 'fragment' && opts.fragmentSource) {
     const detail = opts.fragmentSource;
-    if (detail) {
-      const dw = detail.width / N, dh = detail.height / N;
-      const inset = 0.4;
-      const off = (mp - d) / 2;
-      for (const dot of plan.dots) {
-        const x = ox + dot.col * mp, y = oy + dot.row * mp;
-        ctx.save();
-        ctx.beginPath();
-        if (ctx.roundRect) ctx.roundRect(x + off, y + off, d, d, d * 0.28);
-        else ctx.rect(x + off, y + off, d, d);
-        ctx.clip();
-        ctx.drawImage(
-          detail,
-          dot.col * dw + inset, dot.row * dh + inset, dw - inset * 2, dh - inset * 2,
-          x + off, y + off, d, d,
-        );
-        ctx.restore();
-      }
-      return;
+    const dw = detail.width / N, dh = detail.height / N;
+    const inset = 0.4;
+    const off = (mp - d) / 2;
+    for (const dot of plan.dots) {
+      const x = ox + dot.col * mp, y = oy + dot.row * mp;
+      ctx.save();
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(x + off, y + off, d, d, d * 0.28);
+      else ctx.rect(x + off, y + off, d, d);
+      ctx.clip();
+      ctx.drawImage(
+        detail,
+        dot.col * dw + inset, dot.row * dh + inset, dw - inset * 2, dh - inset * 2,
+        x + off, y + off, d, d,
+      );
+      ctx.restore();
     }
-    // no detail source — fall back to circles below
+    return;
   }
 
   if (opts.shape === 'soft' || opts.shape === 'circle' || opts.shape === 'rounded') {

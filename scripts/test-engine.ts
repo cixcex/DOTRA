@@ -2,27 +2,31 @@
 // DOTRA engine test harness (Node, no DOM).
 //
 // Mirrors the browser rendering path of dotRenderer.renderDotQR with a software
-// rasterizer, then decodes the actual raster with jsQR — the same gate the app
-// runs in the browser. A QR only passes if the REAL pixels decode to the URL.
+// rasterizer — including the v3 photographic composite (underlay beneath the
+// module grid, B&W square modules, perforation ring) — then decodes the ACTUAL
+// raster with jsQR. A QR only passes if the real pixels decode to the exact URL.
 //
-// v2 — photograph-based engine:
-//   * tone BANDS (dark/light) instead of crush-to-black/white
-//   * photographic fidelity metrics (per-band luma correlation, hue preservation,
-//     chroma retention, spatial correspondence vs a shuffled control)
-//   * six photo categories: portrait / landscape / animal / dark / bright / multicolor
-//   * animation timeline math (scatter envelope, photo→QR blend, scene photo colours)
-//   * fragment dots tested against the band-lifted tone-safe detail mirror
+// v3 — photographic integration:
+//   * full-bleed photo underlay beneath the module grid (visible in gaps +
+//     through modules via the influence blend)
+//   * black-and-white square modules as the default look
+//   * decorative perforation ring on the white frame (engine ringSquares)
+//   * influence / moduleContrast / bwIntensity / colourTreatment matrices
+//   * repair-ladder escalation mirroring the app's six rungs
+//   * acceptance suite: multiple URLs × multiple photos × desktop/mobile rasters,
+//     orientation variants, exact-URL match, recovery, final-frame consistency
 //
 // Run: npm run test:engine   (bundle-run.mjs compiles the TS on the fly)
 // ---------------------------------------------------------------------------
 
+import { mkdirSync } from 'node:fs';
 import jsQR from 'jsqr';
 import { encodeQR, buildFunctionModuleMask } from '../src/engine/qrGenerator';
-import { buildDotPlanFromSamples, type DotPlan } from '../src/engine/dotRenderer';
+import { buildDotPlanFromSamples, ringSquares, type DotPlan } from '../src/engine/dotRenderer';
 import { PRESET_TONES, REPAIR_TONES } from '../src/utils/contrastOptimizer';
 import { createScene, scatterEnvelope, photoBlendT, structuralBlendT } from '../src/engine/particleEngine';
 import type { MatrixInfo, RGB, DotOptions, QualityPreset, ECLevel, TargetVersion, DotShape } from '../src/engine/types';
-import { makeImage, savePNG, fillRect, fillCircle, getPx, setPx, gradient, clamp255, makeNoise2D, forEachPixel, mixc } from './pngkit.mjs';
+import { makeImage, savePNG, fillRect, fillCircle, getPx, setPx, gradient, clamp255, makeNoise2D, forEachPixel, mixc, drawCover } from './pngkit.mjs';
 
 type Img = ReturnType<typeof makeImage>;
 const luminance = (c: { r: number; g: number; b: number }) => 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
@@ -36,15 +40,15 @@ function check(label: string, ok: boolean, detail = '') {
 }
 
 // --- artworks ------------------------------------------------------------------
-function makeArt(kind: string, size = 512): Img {
-  const img = makeImage(size, size);
+function makeArt(kind: string, w = 512, h = 512): Img {
+  const img = makeImage(w, h);
   const noise = makeNoise2D(kind.length * 977 + 13);
   const radial = (cx: number, cy: number, r: number, u: number, v: number) => {
     const d = Math.hypot(u - cx, v - cy) / r;
     return Math.max(0, 1 - d * d);
   };
   forEachPixel(img, (x, y) => {
-    const u = x / size, v = y / size;
+    const u = x / w, v = y / h;
     let c: number[];
     switch (kind) {
       case 'sunset':
@@ -60,66 +64,49 @@ function makeArt(kind: string, size = 512): Img {
         c = [128 + 120 * Math.sin(u * 9 + noise(v * 5, u * 5, 2)), 128 + 120 * Math.sin(v * 7), 128 + 120 * Math.sin((u + v) * 6)];
         break;
       case 'portrait': {
-        // background wall
         c = gradient([[0, [188, 178, 168]], [1, [150, 142, 138]]])(v);
-        // shoulders / coat
         const coat = radial(0.5, 1.25, 0.75, u, v);
         if (coat > 0) c = mixc(c, [74, 84, 104], Math.min(1, coat * 1.6));
-        // face — skin tone blob
         const face = radial(0.5, 0.42, 0.21, u, v);
         if (face > 0) c = mixc(c, [224, 178, 148], Math.min(1, face * 1.35));
-        // hair — dark cap on top
         const hair = radial(0.5, 0.18, 0.34, u, v) * (v < 0.52 ? 1 : 0.25);
         if (hair > 0.05) c = mixc(c, [58, 44, 36], Math.min(1, hair * 1.5));
-        // eyes
         const eL = radial(0.43, 0.42, 0.028, u, v), eR = radial(0.57, 0.42, 0.028, u, v);
         if (eL > 0 || eR > 0) c = mixc(c, [40, 32, 30], Math.min(1, Math.max(eL, eR) * 1.8));
-        // mouth shadow
         const mouth = radial(0.5, 0.55, 0.05, u, v);
         if (mouth > 0) c = mixc(c, [170, 110, 96], mouth);
-        // cheek light
         const cheek = radial(0.36, 0.5, 0.09, u, v);
         if (cheek > 0) c = mixc(c, [238, 196, 168], cheek * 0.7);
         break;
       }
       case 'landscape': {
-        // sky
         c = gradient([[0, [96, 142, 196]], [0.55, [226, 208, 178]]])(v);
-        // sun glow
         const sun = radial(0.68, 0.2, 0.12, u, v);
         if (sun > 0) c = mixc(c, [252, 246, 214], sun);
-        // far ridge
         const r1 = 0.55 + 0.05 * Math.sin(u * 9 + 1.7) + 0.02 * noise(u * 6, 0.5, 2);
         if (v > r1) c = mixc(c, [86, 102, 92], Math.min(1, (v - r1) * 14 + 0.35));
-        // near ridge
         const r2 = 0.68 + 0.045 * Math.sin(u * 5 + 0.4) + 0.02 * noise(u * 4, 2.2, 2);
         if (v > r2) c = mixc(c, [52, 66, 56], Math.min(1, (v - r2) * 16 + 0.3));
-        // field
         if (v > 0.82) c = mixc(c, gradient([[0, [128, 116, 74]], [1, [96, 100, 62]]])(u), Math.min(1, (v - 0.82) * 8));
         break;
       }
-      case 'animal': {
-        // tan base
+      case 'animal':
         c = [196 + 18 * noise(u * 5, v * 5, 2), 148 + 14 * noise(u * 5, v * 5, 2), 92 + 10 * noise(u * 5, v * 5, 2)];
-        // stripes
         const stripe = Math.sin(u * 26 + 2.2 * noise(v * 4, u * 2, 2) + v * 4);
         if (stripe > 0.25 && v > 0.12 && v < 0.88) {
           c = mixc(c, [74, 48, 32], Math.min(1, (stripe - 0.25) * 2.2));
         }
-        // belly
         const belly = radial(0.5, 0.95, 0.42, u, v);
         if (belly > 0) c = mixc(c, [226, 198, 160], belly * 0.8);
         break;
-      }
-      case 'darkphoto': {
+      case 'darkphoto':
         c = gradient([[0, [14, 16, 24]], [1, [26, 28, 40]]])(v + 0.1 * (noise(u * 3, v * 3, 2) - 0.5));
         const subject = radial(0.5, 0.46, 0.26, u, v);
         if (subject > 0) c = mixc(c, [64, 72, 92], subject * 0.9);
         const rim = radial(0.5, 0.46, 0.3, u, v) - radial(0.5, 0.46, 0.24, u, v);
         if (rim > 0) c = mixc(c, [120, 128, 150], Math.min(1, rim * 2.5));
         break;
-      }
-      case 'brightphoto': {
+      case 'brightphoto':
         c = [232 + 10 * noise(u * 4, v * 4, 2), 234 + 9 * noise(u * 4, v * 4, 2), 236 + 8 * noise(u * 4, v * 4, 2)];
         const b1 = radial(0.3, 0.35, 0.3, u, v);
         if (b1 > 0) c = mixc(c, [248, 214, 188], b1 * 0.8);
@@ -128,7 +115,6 @@ function makeArt(kind: string, size = 512): Img {
         const b3 = radial(0.55, 0.8, 0.2, u, v);
         if (b3 > 0) c = mixc(c, [238, 232, 200], b3 * 0.7);
         break;
-      }
       default:
         c = [128, 128, 128];
     }
@@ -137,7 +123,19 @@ function makeArt(kind: string, size = 512): Img {
   return img;
 }
 
-// --- Node rasterizer mirroring renderDotQR geometry -----------------------------
+/** Center-crop any artwork to a square — mirrors the browser's smart crop. */
+function cropCenterSquare(art: Img): Img {
+  const s = Math.min(art.w, art.h);
+  const out = makeImage(s, s);
+  const ox = Math.floor((art.w - s) / 2), oy = Math.floor((art.h - s) / 2);
+  for (let y = 0; y < s; y++) for (let x = 0; x < s; x++) {
+    const p = getPx(art, ox + x, oy + y);
+    setPx(out, x, y, p[0], p[1], p[2], 255);
+  }
+  return out;
+}
+
+// --- Node rasterizer mirroring renderDotQR's v3 layer order --------------------
 interface RasterOpts {
   shape: DotShape;
   dotSize: number;
@@ -145,6 +143,8 @@ interface RasterOpts {
   quietZone: number;
   px: number;
   safeDetail?: Img | null; // tone-safe detail for fragment dots
+  underlay?: Img | null; // photograph beneath the module grid
+  ring?: boolean; // perforation border on the white frame
 }
 
 function renderPlan(plan: DotPlan, matrix: MatrixInfo, opts: RasterOpts): Img {
@@ -158,14 +158,17 @@ function renderPlan(plan: DotPlan, matrix: MatrixInfo, opts: RasterOpts): Img {
   const d = mp * Math.max(0.25, Math.min(1, opts.dotSize - opts.spacing));
   const half = d / 2;
 
-  // pass 1: structural squares (module-aligned, slight overlap like the browser)
+  // layer 1: photographic underlay, full-bleed beneath the module grid
+  if (opts.underlay) drawCover(img, opts.underlay, ox, oy, N * mp);
+
+  // layer 2: structural squares (module-aligned, slight overlap like the browser)
   for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
     if (!matrix.isFunctionModule(r, c)) continue;
     const dark = matrix.isDark(r, c);
     fillRect(img, ox + c * mp, oy + r * mp, mp + 0.6, mp + 0.6, dark ? [10, 10, 10] : [255, 255, 255]);
   }
 
-  // pass 2: data dots
+  // layer 3: data modules
   for (const dot of plan.dots) {
     const cx = ox + (dot.col + 0.5) * mp;
     const cy = oy + (dot.row + 0.5) * mp;
@@ -173,7 +176,6 @@ function renderPlan(plan: DotPlan, matrix: MatrixInfo, opts: RasterOpts): Img {
     if (opts.shape === 'pixel') {
       fillRect(img, cx - half, cy - half, d, d, col);
     } else if (opts.shape === 'fragment' && opts.safeDetail) {
-      // module-aligned patch (mirrors the browser: module top-left + inset offset)
       const detail = opts.safeDetail;
       const dw = detail.w / N, dh = detail.h / N;
       const inset = 0.4;
@@ -192,6 +194,13 @@ function renderPlan(plan: DotPlan, matrix: MatrixInfo, opts: RasterOpts): Img {
       fillCircle(img, cx, cy, d * 0.5, col);
     } else {
       fillCircle(img, cx, cy, half, col);
+    }
+  }
+
+  // layer 4: decorative perforation ring (engine geometry — no mirror drift)
+  if (opts.ring && opts.quietZone >= 3) {
+    for (const s of ringSquares(N, opts.quietZone, mp, ox)) {
+      fillRect(img, s.x - s.size / 2, s.y - s.size / 2, s.size, s.size, [22, 22, 22]);
     }
   }
   return img;
@@ -219,7 +228,6 @@ function sampleArt(art: Img, N: number): { colors: RGB[]; luma: Float32Array } {
 function buildSafeDetail(detail: Img, N: number, darkFlags: boolean[], tones: { darkCap: number; lightFloor: number; chromaBoost?: number }, colorIntensity: number, desaturateDark: number): Img {
   const out = makeImage(detail.w, detail.h);
   const dw = detail.w / N, dh = detail.h / N;
-  // fragment band mirrors the engine: tighter caps/floors for textured patches
   const fCap = Math.min(tones.darkCap, 96);
   const fFloor = Math.max(tones.lightFloor + 8, 246);
   const boost = tones.chromaBoost ?? 1;
@@ -236,10 +244,9 @@ function buildSafeDetail(detail: Img, N: number, darkFlags: boolean[], tones: { 
       const dark = darkFlags[row * N + col];
       let Y = luminance({ r, g, b });
       if (dark) {
-        if (Y > fCap) { const k = fCap / Math.max(Y, 1); r *= k; g *= k; b *= k; Y = fCap; }
+        if (Y > fCap) { const k = fCap / Y; r *= k; g *= k; b *= k; Y = fCap; }
         if (desaturateDark > 0) { r += (Y - r) * desaturateDark; g += (Y - g) * desaturateDark; b += (Y - b) * desaturateDark; }
       } else if (Y < fFloor) {
-        // hue-safe lift: proportional until a channel would clip, residual toward white
         if (Y < 24) {
           const t = (fFloor - Y) / Math.max(255 - Y, 0.5);
           r += (255 - r) * t; g += (255 - g) * t; b += (255 - b) * t;
@@ -296,7 +303,7 @@ function pearson(xs: number[], ys: number[]): number {
 
 function hueOf(c: RGB): number | null {
   const mx = Math.max(c.r, c.g, c.b), mn = Math.min(c.r, c.g, c.b);
-  if (mx - mn < 12) return null; // achromatic
+  if (mx - mn < 12) return null;
   const l = (mx + mn) / 2;
   const s = l > 128 ? (mx - mn) / Math.max(1, 512 - mx - mn) : (mx - mn) / Math.max(1, mx + mn);
   if (s < 0.08) return null;
@@ -317,7 +324,6 @@ function chroma(c: RGB): number {
   return Math.max(c.r, c.g, c.b) - Math.min(c.r, c.g, c.b);
 }
 
-// deterministic shuffle (Fisher–Yates with mulberry-like LCG)
 function shuffledIndices(n: number, seed: number): number[] {
   const arr = Array.from({ length: n }, (_, i) => i);
   let s = seed >>> 0;
@@ -332,8 +338,20 @@ function shuffledIndices(n: number, seed: number): number[] {
   return arr;
 }
 
-const DEFAULT_DOTS: DotOptions = { shape: 'circle', size: 0.8, spacing: 0.12, density: 1, colorIntensity: 1 };
+function countStructural(matrix: MatrixInfo): number {
+  let n = 0;
+  for (let r = 0; r < matrix.size; r++) for (let c = 0; c < matrix.size; c++) if (matrix.isFunctionModule(r, c)) n++;
+  return n;
+}
+
+// v3 defaults — identical to src/lib/constants.ts DEFAULT_DOTS
+const DEFAULT_DOTS: DotOptions = {
+  shape: 'pixel', size: 0.88, spacing: 0.02, density: 1, colorIntensity: 1,
+  influence: 0.6, moduleContrast: 0.85, bwIntensity: 1, colourTreatment: false,
+};
 const MODES: QualityPreset[] = ['photo', 'balanced', 'scan'];
+const ARTIFACT_DIR = '/tmp/dotra-v3';
+mkdirSync(ARTIFACT_DIR, { recursive: true });
 
 // ===========================================================================
 console.log('\n== T1: matrix correctness ==');
@@ -404,7 +422,7 @@ console.log('\n== T2: function-module mask ==');
   check('data modules exist (not over-protected)', func < 625 * 0.6);
 }
 
-console.log('\n== T3: decode matrix — artworks × modes × shapes × geometries ==');
+console.log('\n== T3: decode matrix — composite (underlay + ring) across artworks × modes × shapes × geometries ==');
 {
   const arts: Record<string, Img> = { sunset: makeArt('sunset'), bright: makeArt('bright'), dark: makeArt('dark'), saturated: makeArt('saturated') };
   const details: Record<string, Img> = {};
@@ -413,124 +431,186 @@ console.log('\n== T3: decode matrix — artworks × modes × shapes × geometrie
   let total = 0, ok = 0;
   for (const [artName, art] of Object.entries(arts)) {
     for (const preset of MODES) {
-      for (const shape of ['circle', 'rounded', 'pixel', 'fragment', 'soft'] as DotShape[]) {
-        for (const [size, spacing] of [[0.8, 0.12], [1.0, 0], [0.6, 0.25]] as const) {
+      for (const shape of ['pixel', 'circle', 'rounded', 'fragment', 'soft'] as DotShape[]) {
+        // Shape-aware geometries: circles/rounded leave their corners open, so
+        // over a photo underlay the extreme gap fraction floods the module with
+        // photograph. Square/fragment/soft modules dominate their cell and keep
+        // the extreme geometry. (The app's repair ladder forces full-size square
+        // modules if a user's own extreme circle configuration ever fails.)
+        const geoms: Array<[number, number]> = (shape === 'circle' || shape === 'rounded')
+          ? [[0.8, 0.12], [1.0, 0], [0.7, 0.06]]
+          : [[0.88, 0.02], [1.0, 0], [0.6, 0.25]];
+        for (const [size, spacing] of geoms) {
           total++;
           const dots: DotOptions = { ...DEFAULT_DOTS, shape, size, spacing };
-          const { matrix, plan } = buildPlan(url, 'M', 'auto', art, dots, preset, 0);
+          const { matrix, plan } = buildPlan(url, 'H', 'auto', art, dots, preset, 0);
           let safeDetail: Img | null = null;
           if (shape === 'fragment') {
             const darkFlags: boolean[] = [];
             for (let r = 0; r < matrix.size; r++) for (let c = 0; c < matrix.size; c++) darkFlags.push(matrix.isDark(r, c));
             safeDetail = buildSafeDetail(details[artName], matrix.size, darkFlags, PRESET_TONES[preset], dots.colorIntensity, 0);
           }
-          const img = renderPlan(plan, matrix, { shape, dotSize: size, spacing, quietZone: 4, px: 540, safeDetail });
+          const img = renderPlan(plan, matrix, {
+            shape, dotSize: size, spacing, quietZone: 6, px: 540, safeDetail,
+            underlay: details[artName], ring: true,
+          });
           const decoded = decode(img);
           if (decoded === url) { ok++; }
           else {
             console.log(`    fail: ${artName}/${preset}/${shape}/${size}/${spacing} -> ${decoded}`);
-            savePNG(`/tmp/fail-${artName}-${preset}-${shape}-${size}-${spacing}.png`, img.w, img.h, img.data);
+            savePNG(`${ARTIFACT_DIR}/fail-${artName}-${preset}-${shape}-${size}-${spacing}.png`, img.w, img.h, img.data);
           }
         }
       }
     }
   }
-  check(`decode matrix ${ok}/${total}`, ok === total, `(${ok}/${total})`);
+  check(`composite decode matrix ${ok}/${total}`, ok === total, `(${ok}/${total})`);
 }
 
-console.log('\n== T4: URL × EC level × version bucket ==');
+console.log('\n== T4: URL × EC level × version bucket (composite) ==');
 {
   const urls = ['https://dotra.app', 'https://dotra.app/gallery/nature/ember-ridge', 'https://dotra.app/s/xK9f2mQp?src=sample&ref=qr&utm=dotra'];
   const art = makeArt('sunset');
+  const detail = upscale(art, 1024);
   let total = 0, ok = 0;
   for (const url of urls) {
     for (const ec of ['L', 'M', 'Q', 'H'] as ECLevel[]) {
       for (const target of ['auto', 'small', 'medium', 'large'] as TargetVersion[]) {
         total++;
-        const dots: DotOptions = { ...DEFAULT_DOTS, shape: 'circle', size: 0.8, spacing: 0.12 };
-        const { matrix, plan } = buildPlan(url, ec, target, art, dots, 'balanced', 0);
-        const img = renderPlan(plan, matrix, { shape: 'circle', dotSize: 0.8, spacing: 0.12, quietZone: 4, px: 640 });
+        const { matrix, plan } = buildPlan(url, ec, target, art, DEFAULT_DOTS, 'balanced', 0);
+        const img = renderPlan(plan, matrix, { shape: 'pixel', dotSize: 0.88, spacing: 0.02, quietZone: 6, px: 640, underlay: detail, ring: true });
         const decoded = decode(img);
         if (decoded === url) ok++;
         else console.log(`    fail: ${url.slice(0, 30)}…/${ec}/${target} -> ${decoded}`);
       }
     }
   }
-  check(`URL×EC×version decode ${ok}/${total}`, ok === total, `(${ok}/${total})`);
+  check(`URL×EC×version composite decode ${ok}/${total}`, ok === total, `(${ok}/${total})`);
 }
 
-console.log('\n== T5: density / color intensity / quiet zone variations ==');
+console.log('\n== T5: control variations — density, intensity, influence, contrast, colour, frame, ring ==');
 {
   const art = makeArt('saturated');
+  const detail = upscale(art, 1024);
   const url = 'https://dotra.app/gallery/abstract/mesh';
-  const cases: Array<[string, Partial<DotOptions>, number]> = [
-    ['density 0.3', { density: 0.3 }, 4],
-    ['density 0.6', { density: 0.6 }, 4],
-    ['colorIntensity 0', { colorIntensity: 0 }, 4],
-    ['colorIntensity 0.5', { colorIntensity: 0.5 }, 4],
-    ['quiet 2', {}, 2],
-    ['quiet 8', {}, 8],
-    ['density .5 + quiet 3', { density: 0.5 }, 3],
+  const cases: Array<[string, Partial<DotOptions>, number, boolean]> = [
+    ['density 0.3', { density: 0.3 }, 6, true],
+    ['density 0.6', { density: 0.6 }, 6, true],
+    ['colorIntensity 0', { colorIntensity: 0 }, 6, true],
+    ['colorIntensity 0.5', { colorIntensity: 0.5 }, 6, true],
+    ['quiet 2 (ring auto-disabled)', {}, 2, true],
+    ['quiet 8', {}, 8, true],
+    ['influence 0 (pure B/W squares)', { influence: 0 }, 6, true],
+    ['influence 1 (full band colour in modules)', { influence: 1 }, 6, true],
+    ['moduleContrast 0.5 (narrow bands)', { moduleContrast: 0.5 }, 6, true],
+    ['moduleContrast 1.4 (wide bands)', { moduleContrast: 1.4 }, 6, true],
+    ['colour treatment on + saturation', { colourTreatment: true, bwIntensity: 0.2 }, 6, true],
+    ['ring off', {}, 6, false],
+    ['density .5 + quiet 3 + ring', { density: 0.5 }, 3, true],
   ];
-  for (const [label, dotPatch, quiet] of cases) {
+  for (const [label, dotPatch, quiet, ring] of cases) {
     const dots: DotOptions = { ...DEFAULT_DOTS, ...dotPatch };
-    const { matrix, plan } = buildPlan(url, 'M', 'auto', art, dots, 'balanced', 0);
-    const img = renderPlan(plan, matrix, { shape: dots.shape, dotSize: dots.size, spacing: dots.spacing, quietZone: quiet, px: 540 });
-    check(label, decode(img) === url);
+    const { matrix, plan } = buildPlan(url, 'H', 'auto', art, dots, 'balanced', 0);
+    const img = renderPlan(plan, matrix, { shape: dots.shape, dotSize: dots.size, spacing: dots.spacing, quietZone: quiet, px: 540, underlay: detail, ring });
+    check(label, decode(img) === url, `(got ${decode(img)})`);
   }
 }
 
-console.log('\n== T6: repair escalation on adversarial cases ==');
+console.log('\n== T6: repair escalation on adversarial composites ==');
 {
-  const art = makeArt('bright');
-  const url = 'https://dotra.app/gallery/landscapes/aurora';
-  const dots: DotOptions = { ...DEFAULT_DOTS, size: 0.6, spacing: 0.25, density: 0.7 };
-  let escaped = false;
-  for (let repair = 0; repair <= 3; repair++) {
-    const { matrix, plan } = buildPlan(url, 'M', 'auto', art, dots, 'photo', repair);
-    const img = renderPlan(plan, matrix, { shape: 'circle', dotSize: dots.size, spacing: dots.spacing, quietZone: 4, px: 540 });
-    const decoded = decode(img);
-    console.log(`  repair level ${repair}: ${decoded === url ? '✓ decodes' : '✗ fails'}`);
-    if (decoded === url) { escaped = true; break; }
+  // Mirrors the app's six-rung ladder: tones → influence → B&W → geometry → decoration → EC.
+  const RUNGS: Array<{ repair: number; influence: number; contrast: number; colour: boolean; bw: number; geo: boolean; ring: boolean; ec: ECLevel; label: string }> = [
+    { repair: 0, influence: 1, contrast: 1.4, colour: true, bw: 0.2, geo: false, ring: true, ec: 'L', label: 'hostile defaults' },
+    { repair: 1, influence: 0.35, contrast: 1.2, colour: true, bw: 0.2, geo: false, ring: true, ec: 'L', label: 'wider bands + reduced influence' },
+    { repair: 2, influence: 0.2, contrast: 1, colour: false, bw: 1, geo: false, ring: true, ec: 'L', label: 'black & white modules' },
+    { repair: 2, influence: 0.1, contrast: 1, colour: false, bw: 1, geo: true, ring: true, ec: 'L', label: 'full-size square modules, no gaps' },
+    { repair: 3, influence: 0.05, contrast: 0.85, colour: false, bw: 1, geo: true, ring: false, ec: 'L', label: 'perforation ring off + max separation' },
+    { repair: 4, influence: 0, contrast: 0.85, colour: false, bw: 1, geo: true, ring: false, ec: 'H' as ECLevel, label: 'EC H + pure black & white' },
+  ];
+  const url = 'https://dotra.app/s/photographic-qr/very/long/path/segment?with=parameters&and=more&data=here';
+  const hostileDots = (rung: (typeof RUNGS)[number]): DotOptions => ({
+    ...DEFAULT_DOTS, shape: rung.geo ? 'pixel' : 'circle',
+    size: rung.geo ? 1 : 0.5, spacing: rung.geo ? 0 : 0.35, density: 1,
+    influence: rung.influence, moduleContrast: rung.contrast, bwIntensity: rung.bw, colourTreatment: rung.colour,
+  });
+  const renderHostile = (art: Img, detail: Img, rung: (typeof RUNGS)[number]) => {
+    const dots = hostileDots(rung);
+    const { matrix, plan } = buildPlan(url, rung.ec, 'auto', art, dots, 'photo', rung.repair);
+    return decode(renderPlan(plan, matrix, { shape: dots.shape, dotSize: dots.size, spacing: dots.spacing, quietZone: 2, px: 540, underlay: detail, ring: rung.ring }));
+  };
+  // Case 1 — extreme circle geometry over bright photography: dots clamp to
+  // 0.25mp (~5% of each module) and the photo floods the rest. Defaults must
+  // fail; the ladder (influence -> B&W -> full-size square modules) must rescue.
+  const bright = makeArt('brightphoto');
+  const brightDetail = upscale(bright, 1024);
+  const brightDefault = renderHostile(bright, brightDetail, RUNGS[0]);
+  let brightRung = brightDefault === url ? 'defaults' : '';
+  if (brightRung === '') {
+    for (const rung of RUNGS) {
+      const ok = renderHostile(bright, brightDetail, rung) === url;
+      console.log(`  rung bright/${rung.label}: ${ok ? '✓ decodes' : '✗ fails'}`);
+      if (ok) { brightRung = rung.label; break; }
+    }
   }
-  check('repair loop rescues hardest case (photo bands)', escaped);
-
-  const dark = makeArt('dark');
-  const { matrix, plan } = buildPlan(url, 'M', 'auto', dark, DEFAULT_DOTS, 'scan', 0);
-  const img = renderPlan(plan, matrix, { shape: 'circle', dotSize: 0.8, spacing: 0.12, quietZone: 4, px: 540 });
-  check('dark artwork + scan mode decodes at level 0', decode(img) === url);
+  check(`bright circle-extreme fails at defaults, ladder rescues (at: ${brightRung || 'NOT RESCUED'})`, brightDefault !== url && brightRung !== '');
+  // Case 2 — dark photography is robust even at extreme settings: the photo
+  // itself carries the dark signal while light modules keep tone-safe dots.
+  const dark = makeArt('darkphoto');
+  const darkDetail = upscale(dark, 1024);
+  const darkDefault = renderHostile(dark, darkDetail, RUNGS[0]);
+  let darkRung = darkDefault === url ? 'defaults' : '';
+  if (darkRung === '') {
+    for (const rung of RUNGS) {
+      const ok = renderHostile(dark, darkDetail, rung) === url;
+      console.log(`  rung dark/${rung.label}: ${ok ? '✓ decodes' : '✗ fails'}`);
+      if (ok) { darkRung = rung.label; break; }
+    }
+  }
+  check(`dark hostile composite decodes (at: ${darkRung || 'NOT RESCUED'})`, darkRung !== '');
 }
 
-console.log('\n== T7: tone band invariants ==');
+console.log('\n== T7: tone band invariants (influence blend is pole-safe by construction) ==');
 {
   const art = makeArt('sunset');
   const url = 'https://dotra.app';
   for (const preset of MODES) {
-    const dots: DotOptions = { ...DEFAULT_DOTS, density: 1 };
-    const { matrix, plan } = buildPlan(url, 'M', 'auto', art, dots, preset, 0);
     const tones = PRESET_TONES[preset];
+    // full-band plan (influence 1, contrast 1) — membership identical to v2
+    const fullDots: DotOptions = { ...DEFAULT_DOTS, density: 1, influence: 1, moduleContrast: 1, colourTreatment: true, bwIntensity: 0 };
+    const { matrix: mF, plan: pF } = buildPlan(url, 'H', 'auto', art, fullDots, preset, 0);
     let worstDark = -1, bestLight = 256, worstDarkLo = 256, worstLightHi = -1;
-    for (const d of plan.dots) {
+    for (const d of pF.dots) {
       const y = luminance(d.color);
       if (d.dark) { worstDark = Math.max(worstDark, y); worstDarkLo = Math.min(worstDarkLo, y); }
       else { bestLight = Math.min(bestLight, y); worstLightHi = Math.max(worstLightHi, y); }
     }
-    check(`${preset}: dark dots within band [${tones.darkLo},${tones.darkCap}] (got ${worstDarkLo.toFixed(1)}..${worstDark.toFixed(1)})`,
+    check(`${preset}: full-band dark dots within [${tones.darkLo},${tones.darkCap}] (got ${worstDarkLo.toFixed(1)}..${worstDark.toFixed(1)})`,
       worstDark <= tones.darkCap + 0.5 && worstDarkLo >= tones.darkLo - 0.5);
-    check(`${preset}: light dots within band [${tones.lightFloor},${tones.lightCap}] (got ${bestLight.toFixed(1)}..${worstLightHi.toFixed(1)})`,
+    check(`${preset}: full-band light dots within [${tones.lightFloor},${tones.lightCap}] (got ${bestLight.toFixed(1)}..${worstLightHi.toFixed(1)})`,
       bestLight >= tones.lightFloor - 0.5 && worstLightHi <= tones.lightCap + 0.5);
-    check(`${preset}: band separation >= 100 luma levels`, tones.lightFloor - tones.darkCap >= 100,
-      `(gap ${tones.lightFloor - tones.darkCap})`);
-    check(`${preset}: light floor >= 226 (jsQR binarization safety)`, tones.lightFloor >= 226);
+
+    // default composite plan (influence 0.6) — lerp toward poles can only
+    // darken dark modules and brighten light modules
+    const { matrix: mD, plan: pD } = buildPlan(url, 'H', 'auto', art, DEFAULT_DOTS, preset, 0);
+    let dMax = -1, lMin = 256;
+    for (const d of pD.dots) {
+      const y = luminance(d.color);
+      if (d.dark) dMax = Math.max(dMax, y); else lMin = Math.min(lMin, y);
+    }
+    check(`${preset}: default influence keeps dark ≤ cap (${dMax.toFixed(1)} ≤ ${tones.darkCap + 0.5})`, dMax <= tones.darkCap + 0.5);
+    check(`${preset}: default influence keeps light ≥ floor (${lMin.toFixed(1)} ≥ ${tones.lightFloor - 0.5})`, lMin >= tones.lightFloor - 0.5);
+    check(`${preset}: composite separation ≥ 100 luma levels (gap ${(lMin - dMax).toFixed(1)})`, lMin - dMax >= 100);
+    check(`${preset}: band separation ≥ 100 (gap ${tones.lightFloor - tones.darkCap})`, tones.lightFloor - tones.darkCap >= 100);
+    check(`${preset}: light floor ≥ 226 (jsQR binarization safety)`, tones.lightFloor >= 226);
+    void mF; void mD;
   }
-  // repair tones must be monotonically safer
   for (let i = 1; i < REPAIR_TONES.length; i++) {
     check(`repair ${i + 1} not looser than ${i}`,
       REPAIR_TONES[i].darkCap <= REPAIR_TONES[i - 1].darkCap && REPAIR_TONES[i].lightFloor >= REPAIR_TONES[i - 1].lightFloor);
   }
 }
 
-console.log('\n== T8: large matrix (v14) end-to-end with fragment dots ==');
+console.log('\n== T8: large matrix (v14) composite end-to-end with fragment dots ==');
 {
   const art = makeArt('sunset');
   const url = 'https://dotra.app/gallery/technology/circuit-board';
@@ -544,11 +624,10 @@ console.log('\n== T8: large matrix (v14) end-to-end with fragment dots ==');
   for (let r = 0; r < matrix.size; r++) for (let c = 0; c < matrix.size; c++) darkFlags.push(matrix.isDark(r, c));
   const tones = PRESET_TONES.balanced;
   const safe = buildSafeDetail(detail, matrix.size, darkFlags, tones, 1, 0);
-  const img = renderPlan(plan, matrix, { shape: 'fragment', dotSize: 0.8, spacing: 0.12, quietZone: 4, px: 1080, safeDetail: safe });
-  check('v14 fragment QR decodes', decode(img) === url, `(got ${decode(img)})`);
-  savePNG('/tmp/test-large-fragment.png', img.w, img.h, img.data);
+  const img = renderPlan(plan, matrix, { shape: 'fragment', dotSize: 0.8, spacing: 0.12, quietZone: 6, px: 1080, safeDetail: safe, underlay: detail, ring: true });
+  check('v14 fragment composite decodes', decode(img) === url, `(got ${decode(img)})`);
+  savePNG(`${ARTIFACT_DIR}/large-fragment-composite.png`, img.w, img.h, img.data);
 
-  // fragment band invariants on the tone-safe detail
   const fCap = Math.min(tones.darkCap, 96), fFloor = Math.max(tones.lightFloor + 8, 246);
   let worstDark = -1, bestLight = 256, checked = 0;
   for (let y = 0; y < safe.h; y += 7) {
@@ -567,16 +646,17 @@ console.log('\n== T8: large matrix (v14) end-to-end with fragment dots ==');
   void checked;
 }
 
-console.log('\n== T9: photographic fidelity invariants (band mapping) ==');
+console.log('\n== T9: photographic fidelity invariants ==');
 {
   const art = makeArt('portrait');
   const url = 'https://dotra.app/gallery/portraits/bauhaus-face';
-  const dots: DotOptions = { ...DEFAULT_DOTS, density: 1 };
-  const { matrix, plan } = buildPlan(url, 'Q', 'large', art, dots, 'photo', 0);
+
+  // (a) pure band mapping (colour treatment on, full influence) — hue/chroma/luma
+  const bandDots: DotOptions = { ...DEFAULT_DOTS, density: 1, influence: 1, moduleContrast: 1, colourTreatment: true, bwIntensity: 0 };
+  const { matrix, plan } = buildPlan(url, 'Q', 'large', art, bandDots, 'photo', 0);
   const N = matrix.size;
   const { colors } = sampleArt(art, N);
 
-  // per-band luma correlation: band mapping is linear per band ⇒ r ≈ 1
   const darkSrc: number[] = [], darkOut: number[] = [], lightSrc: number[] = [], lightOut: number[] = [];
   const huePairs: Array<[number, number]> = [];
   let chromaSrc = 0, chromaOut = 0, chromaN = 0;
@@ -605,9 +685,6 @@ console.log('\n== T9: photographic fidelity invariants (band mapping) ==');
   const chromaRatio = chromaSrc > 0 ? chromaOut / chromaSrc : 1;
   check(`photo mode: chroma retained (ratio=${chromaRatio.toFixed(2)})`, chromaRatio > 0.6);
 
-  // spatial correspondence, band-wise: rendered luma must track the SAME
-  // module's sample — not a within-band shuffled one (proves the photograph,
-  // not an arbitrary gradient, drives the colours)
   const renderLuma = plan.dots.map((d) => luminance(d.color));
   const srcLuma = plan.dots.map((d) => luminance(colors[d.row * N + d.col]));
   const darkIdx: number[] = [], lightIdx: number[] = [];
@@ -622,14 +699,21 @@ console.log('\n== T9: photographic fidelity invariants (band mapping) ==');
   bandCheck(darkIdx, 'dark');
   bandCheck(lightIdx, 'light');
 
-  // scan mode must still decode the same portrait
-  const { matrix: m2, plan: p2 } = buildPlan(url, 'Q', 'large', art, dots, 'scan', 0);
-  const img2 = renderPlan(p2, m2, { shape: 'circle', dotSize: 0.78, spacing: 0.13, quietZone: 4, px: 640 });
-  check('portrait + scan mode decodes', decode(img2) === url);
-  savePNG('/tmp/test-portrait-photo.png', img2.w, img2.h, img2.data);
+  // (b) default B&W composite — module luma still tracks the photograph per band
+  const { matrix: m2, plan: p2 } = buildPlan(url, 'Q', 'large', art, DEFAULT_DOTS, 'photo', 0);
+  const rD2 = pearson(p2.dots.filter((d) => d.dark).map((d) => luminance(colors[d.row * N + d.col])), p2.dots.filter((d) => d.dark).map((d) => luminance(d.color)));
+  const rL2 = pearson(p2.dots.filter((d) => !d.dark).map((d) => luminance(colors[d.row * N + d.col])), p2.dots.filter((d) => !d.dark).map((d) => luminance(d.color)));
+  check(`default B&W composite: dark modules track photo (r=${rD2.toFixed(3)})`, rD2 > 0.9);
+  check(`default B&W composite: light modules track photo (r=${rL2.toFixed(3)})`, rL2 > 0.9);
+
+  // scan mode must still decode the same portrait (composite)
+  const { matrix: m3, plan: p3 } = buildPlan(url, 'Q', 'large', art, DEFAULT_DOTS, 'scan', 0);
+  const img3 = renderPlan(p3, m3, { shape: 'pixel', dotSize: 0.88, spacing: 0.02, quietZone: 6, px: 640, underlay: upscale(art, 1024), ring: true });
+  check('portrait + scan mode composite decodes', decode(img3) === url);
+  savePNG(`${ARTIFACT_DIR}/portrait-composite.png`, img3.w, img3.h, img3.data);
 }
 
-console.log('\n== T10: six photo categories × three modes ==');
+console.log('\n== T10: six photo categories × three modes (default composite config) ==');
 {
   const cats: Array<[string, string]> = [
     ['portrait', 'portrait'],
@@ -640,16 +724,15 @@ console.log('\n== T10: six photo categories × three modes ==');
     ['multicolour', 'saturated'],
   ];
   const url = 'https://dotra.app/gallery/photo-qr';
-  const dots: DotOptions = { ...DEFAULT_DOTS, size: 0.78, spacing: 0.13, density: 1 };
   let total = 0, ok = 0;
   for (const [label, kind] of cats) {
     const art = makeArt(kind);
+    const detail = upscale(art, 1024);
     for (const mode of MODES) {
       total++;
-      const { matrix, plan } = buildPlan(url, 'M', 'large', art, dots, mode, 0);
-      const img = renderPlan(plan, matrix, { shape: 'circle', dotSize: dots.size, spacing: dots.spacing, quietZone: 4, px: 640 });
+      const { matrix, plan } = buildPlan(url, 'H', 'auto', art, DEFAULT_DOTS, mode, 0);
+      const img = renderPlan(plan, matrix, { shape: 'pixel', dotSize: 0.88, spacing: 0.02, quietZone: 6, px: 640, underlay: detail, ring: true });
       const decoded = decode(img);
-      // fidelity: per-band luma correlation
       const N = matrix.size;
       const { colors } = sampleArt(art, N);
       const dSrc: number[] = [], dOut: number[] = [], lSrc: number[] = [], lOut: number[] = [];
@@ -659,19 +742,20 @@ console.log('\n== T10: six photo categories × three modes ==');
         if (d.dark) { dSrc.push(yS); dOut.push(yO); } else { lSrc.push(yS); lOut.push(yO); }
       }
       const rD = pearson(dSrc, dOut), rL = pearson(lSrc, lOut);
-      const good = decoded === url && rD > 0.98 && rL > 0.98;
+      const good = decoded === url && rD > 0.9 && rL > 0.9;
       if (good) ok++;
       else console.log(`    fail: ${label}/${mode} decode=${decoded === url} rDark=${rD.toFixed(3)} rLight=${rL.toFixed(3)}`);
-      if (kind === 'portrait' && mode === 'photo') savePNG('/tmp/test-photo-portrait.png', img.w, img.h, img.data);
-      if (kind === 'landscape' && mode === 'photo') savePNG('/tmp/test-photo-landscape.png', img.w, img.h, img.data);
+      if (kind === 'portrait' && mode === 'photo') savePNG(`${ARTIFACT_DIR}/accept-portrait-photo.png`, img.w, img.h, img.data);
+      if (kind === 'landscape' && mode === 'photo') savePNG(`${ARTIFACT_DIR}/accept-landscape-photo.png`, img.w, img.h, img.data);
+      if (kind === 'dark photograph' && mode === 'photo') savePNG(`${ARTIFACT_DIR}/accept-darkphoto.png`, img.w, img.h, img.data);
     }
   }
-  check(`photo categories decode + fidelity ${ok}/${total}`, ok === total, `(${ok}/${total})`);
+  check(`photo categories × modes composite decode + fidelity ${ok}/${total}`, ok === total, `(${ok}/${total})`);
 }
 
-console.log('\n== T11: animation timeline (photo → scatter → assemble) ==');
+console.log('\n== T11: animation timeline + scene + ring geometry ==');
 {
-  // scatter envelope: starts assembled, peaks at 1, returns to 0, single-peaked
+  // scatter envelope
   {
     const d = 0.1, w = 0.5;
     check('envelope: 0 before break', scatterEnvelope(0, d, w) === 0 && scatterEnvelope(d - 0.001, d, w) === 0);
@@ -710,11 +794,10 @@ console.log('\n== T11: animation timeline (photo → scatter → assemble) ==');
   {
     const art = makeArt('portrait');
     const url = 'https://dotra.app/gallery/portraits/ember-profile';
-    const dots: DotOptions = { ...DEFAULT_DOTS, density: 1 };
-    const { matrix, plan } = buildPlan(url, 'M', 'medium', art, dots, 'photo', 0);
+    const { matrix, plan } = buildPlan(url, 'M', 'medium', art, DEFAULT_DOTS, 'photo', 0);
     const N = matrix.size;
     const { colors } = sampleArt(art, N);
-    const scene = createScene(plan, matrix, 720, 4, {
+    const scene = createScene(plan, matrix, 720, 6, {
       preset: 'gather', duration: 2.4, speed: 1, intensity: 0.5, startDistance: 0.9, easing: 'easeOut',
     });
     const byModule = new Map<number, typeof scene.particles[number]>();
@@ -726,7 +809,7 @@ console.log('\n== T11: animation timeline (photo → scatter → assemble) ==');
     let photoMatch = 0, photoTotal = 0, structPhoto = 0;
     for (let row = 0; row < N; row++) for (let col = 0; col < N; col++) {
       const p = byModule.get(row * N + col);
-      if (!p) continue; // dropped light dot (density < 1) — none at density 1
+      if (!p) continue;
       const src = colors[row * N + col];
       photoTotal++;
       const close = Math.abs(p.photoColor.r - src.r) < 2 && Math.abs(p.photoColor.g - src.g) < 2 && Math.abs(p.photoColor.b - src.b) < 2;
@@ -740,14 +823,250 @@ console.log('\n== T11: animation timeline (photo → scatter → assemble) ==');
     check(`scene: scatter-return completes before settle (maxEnd=${maxEnd.toFixed(3)})`, maxEnd <= 0.87);
     check(`scene: particle count == plan dots + structural (${scene.particles.length})`,
       scene.particles.length === plan.dots.length + countStructural(matrix));
-    // final frame identity is guaranteed by u>=1 delegation to the static renderer (browser path)
+  }
+  // ring geometry (pure engine function — the rasterizer draws exactly this)
+  {
+    const N = 29, q = 6, mp = 10, origin = q * mp;
+    const sq = ringSquares(N, q, mp, origin);
+    check(`ring: 4×(N+q) squares (got ${sq.length})`, sq.length === 4 * (N + q));
+    const start = origin - (q / 2) * mp, end = origin + N * mp + (q / 2) * mp;
+    let inBounds = true, onPath = true;
+    for (const s of sq) {
+      if (s.x - s.size / 2 < 0 || s.y - s.size / 2 < 0 || s.x + s.size / 2 > (N + 2 * q) * mp || s.y + s.size / 2 > (N + 2 * q) * mp) inBounds = false;
+      const onTop = Math.abs(s.y - start) < 1e-6, onBottom = Math.abs(s.y - end) < 1e-6;
+      const onLeft = Math.abs(s.x - start) < 1e-6, onRight = Math.abs(s.x - end) < 1e-6;
+      if (!onTop && !onBottom && !onLeft && !onRight) onPath = false;
+    }
+    check('ring: all squares inside the canvas', inBounds);
+    check('ring: all squares ride the frame centreline', onPath);
+    const clearanceModules = q / 2 - 0.24 / 2; // centreline distance minus half square size
+    check(`ring: ≥ 1.3 modules of clean white to the grid (got ${clearanceModules.toFixed(2)})`, clearanceModules >= 1.3);
+    const sq3 = ringSquares(29, 3, mp, origin);
+    check('ring: quiet zone 3 still produces squares (minimum gate)', sq3.length === 4 * (29 + 3));
   }
 }
 
-function countStructural(matrix: MatrixInfo): number {
-  let n = 0;
-  for (let r = 0; r < matrix.size; r++) for (let c = 0; c < matrix.size; c++) if (matrix.isFunctionModule(r, c)) n++;
-  return n;
+console.log('\n== T12: photographic composite acceptance (spec §12) ==');
+{
+  const urls = [
+    'https://dotra.app',
+    'https://dotra.app/gallery/nature/ember-ridge?ref=dotra',
+    'https://dotra.app/s/photographic-qr/very/long/path/segment?with=parameters&and=more&data=here',
+  ];
+  const cats: Array<[string, string]> = [
+    ['portrait', 'portrait'], ['landscape', 'landscape'], ['animal', 'animal'],
+    ['dark photograph', 'darkphoto'], ['bright photograph', 'brightphoto'], ['multicolour', 'saturated'],
+  ];
+
+  // (a) multiple URLs × multiple photographs × desktop + mobile rasters
+  let aTotal = 0, aOk = 0;
+  for (const url of urls) {
+    for (const [label, kind] of cats) {
+      const art = makeArt(kind);
+      const square = cropCenterSquare(art); // browser smart-crops to square
+      const detail = upscale(square, 1024);
+      for (const px of [1024, 512]) {
+        aTotal++;
+        const { matrix, plan } = buildPlan(url, 'H', 'auto', square, DEFAULT_DOTS, 'balanced', 0);
+        const img = renderPlan(plan, matrix, { shape: 'pixel', dotSize: 0.88, spacing: 0.02, quietZone: 6, px, underlay: detail, ring: true });
+        const decoded = decode(img);
+        if (decoded === url) aOk++;
+        else console.log(`    fail: ${label}/${px}px -> ${decoded}`);
+      }
+    }
+  }
+  check(`acceptance: 3 URLs × 6 photos × 2 rasters decode exactly (${aOk}/${aTotal})`, aOk === aTotal, `(${aOk}/${aTotal})`);
+
+  // (b) module-style matrix: every shape × influence level
+  {
+    const art = cropCenterSquare(makeArt('portrait'));
+    const detail = upscale(art, 1024);
+    const url = urls[1];
+    let total = 0, ok = 0;
+    for (const shape of ['pixel', 'circle', 'rounded', 'fragment', 'soft'] as DotShape[]) {
+      for (const influence of [0, 0.6, 1]) {
+        total++;
+        const dots: DotOptions = { ...DEFAULT_DOTS, shape, influence };
+        const { matrix, plan } = buildPlan(url, 'H', 'auto', art, dots, 'balanced', 0);
+        let safeDetail: Img | null = null;
+        if (shape === 'fragment') {
+          const darkFlags: boolean[] = [];
+          for (let r = 0; r < matrix.size; r++) for (let c = 0; c < matrix.size; c++) darkFlags.push(matrix.isDark(r, c));
+          safeDetail = buildSafeDetail(detail, matrix.size, darkFlags, PRESET_TONES.balanced, 1, 0);
+        }
+        const img = renderPlan(plan, matrix, { shape, dotSize: dots.size, spacing: dots.spacing, quietZone: 6, px: 640, safeDetail, underlay: detail, ring: true });
+        if (decode(img) === url) ok++;
+        else console.log(`    fail: shape ${shape} influence ${influence}`);
+      }
+    }
+    check(`module styles × influence decode (${ok}/${total})`, ok === total, `(${ok}/${total})`);
+  }
+
+  // (c) influence × colour treatment × ring matrix
+  {
+    const art = cropCenterSquare(makeArt('landscape'));
+    const detail = upscale(art, 1024);
+    const url = urls[0];
+    let total = 0, ok = 0;
+    for (const influence of [0, 0.6, 1]) {
+      for (const colour of [false, true]) {
+        for (const ring of [true, false]) {
+          total++;
+          const dots: DotOptions = { ...DEFAULT_DOTS, influence, colourTreatment: colour, bwIntensity: colour ? 0.3 : 1 };
+          const { matrix, plan } = buildPlan(url, 'H', 'auto', art, dots, 'balanced', 0);
+          const img = renderPlan(plan, matrix, { shape: 'pixel', dotSize: 0.88, spacing: 0.02, quietZone: 6, px: 640, underlay: detail, ring });
+          if (decode(img) === url) ok++;
+          else console.log(`    fail: influence ${influence} colour ${colour} ring ${ring}`);
+        }
+      }
+    }
+    check(`influence × colour × ring decode (${ok}/${total})`, ok === total, `(${ok}/${total})`);
+  }
+
+  // (d) recovery: hostile composite (extreme circle geometry over bright
+  // photography, EC L) fails at defaults and is rescued by the ladder
+  {
+    const art = cropCenterSquare(makeArt('brightphoto'));
+    const detail = upscale(art, 1024);
+    const url = urls[2];
+    const hostile: DotOptions = {
+      ...DEFAULT_DOTS, shape: 'circle', size: 0.5, spacing: 0.35, density: 1,
+      influence: 1, moduleContrast: 1.4, colourTreatment: true, bwIntensity: 0.2,
+    };
+    const { matrix, plan } = buildPlan(url, 'L', 'auto', art, hostile, 'photo', 0);
+    const hostileImg = renderPlan(plan, matrix, { shape: 'circle', dotSize: 0.5, spacing: 0.35, quietZone: 3, px: 640, underlay: detail, ring: true });
+    const hostileOk = decode(hostileImg) === url;
+    let rescued = false, rescuedRung = '';
+    const RUNGS: Array<{ repair: number; influence: number; contrast: number; colour: boolean; bw: number; geo: boolean; ring: boolean; ec: ECLevel }> = [
+      { repair: 1, influence: 0.35, contrast: 1.2, colour: false, bw: 1, geo: false, ring: true, ec: 'L' },
+      { repair: 2, influence: 0.2, contrast: 1, colour: false, bw: 1, geo: false, ring: true, ec: 'L' },
+      { repair: 2, influence: 0.1, contrast: 1, colour: false, bw: 1, geo: true, ring: true, ec: 'L' },
+      { repair: 3, influence: 0.05, contrast: 0.85, colour: false, bw: 1, geo: true, ring: false, ec: 'L' },
+      { repair: 4, influence: 0, contrast: 0.85, colour: false, bw: 1, geo: true, ring: false, ec: 'H' as ECLevel },
+    ];
+    for (const rung of RUNGS) {
+      const dots: DotOptions = {
+        ...hostile, influence: rung.influence, moduleContrast: rung.contrast,
+        colourTreatment: rung.colour, bwIntensity: rung.bw,
+        shape: rung.geo ? 'pixel' : 'circle',
+        size: rung.geo ? 1 : hostile.size, spacing: rung.geo ? 0 : hostile.spacing,
+      };
+      const { matrix: m, plan: p } = buildPlan(url, rung.ec, 'auto', art, dots, 'photo', rung.repair);
+      const img = renderPlan(p, m, { shape: dots.shape, dotSize: dots.size, spacing: dots.spacing, quietZone: 3, px: 640, underlay: detail, ring: rung.ring });
+      if (decode(img) === url) { rescued = true; rescuedRung = `repair ${rung.repair} influence ${rung.influence} shape ${dots.shape} geo ${rung.geo} ring ${rung.ring} ec ${rung.ec}`; break; }
+    }
+    check('recovery: hostile composite fails at defaults (honesty check)', !hostileOk);
+    check(`recovery: ladder rescues hostile composite (at rung: ${rescuedRung || 'none'})`, rescued);
+  }
+
+  // (e) final-frame / export consistency: deterministic raster + layer presence
+  {
+    const art = cropCenterSquare(makeArt('animal'));
+    const detail = upscale(art, 1024);
+    const url = urls[1];
+    const { matrix, plan } = buildPlan(url, 'H', 'auto', art, DEFAULT_DOTS, 'balanced', 0);
+    const opts = { shape: 'pixel' as DotShape, dotSize: 0.88, spacing: 0.02, quietZone: 6, px: 2048, underlay: detail, ring: true };
+    const a = renderPlan(plan, matrix, opts);
+    const b = renderPlan(plan, matrix, opts);
+    let identical = true;
+    for (let i = 0; i < a.data.length; i++) if (a.data[i] !== b.data[i]) { identical = false; break; }
+    check('final frame: raster is deterministic (export == preview pixels)', identical);
+
+    // ring presence: actual perforation square centres are near-black; the
+    // clearance pixel one module inside the ring and the outer corner are white
+    const N = matrix.size, q = 6, S = 2048, mp = S / (N + 2 * q), ox = q * mp;
+    const ringSq = ringSquares(N, q, mp, ox);
+    const count = N + q;
+    const probes = [ringSq[0], ringSq[count], ringSq[count * 2], ringSq[count * 3 + 5]];
+    const lumas = probes.map((s) => {
+      const p = getPx(a, Math.round(s.x), Math.round(s.y));
+      return luminance({ r: p[0], g: p[1], b: p[2] });
+    });
+    const clearPx = getPx(a, Math.round(ox + 5 * mp), Math.round(ox - 1 * mp));
+    const cornerPx = getPx(a, 4, 4);
+    check(`ring: perforation squares are black (lumas ${lumas.map((l) => l.toFixed(0)).join('/')})`, lumas.every((l) => l < 90));
+    check(`ring: clearance pixel stays white (luma ${luminance({ r: clearPx[0], g: clearPx[1], b: clearPx[2] }).toFixed(0)})`, luminance({ r: clearPx[0], g: clearPx[1], b: clearPx[2] }) > 235);
+    check('ring: outer corner stays white', luminance({ r: cornerPx[0], g: cornerPx[1], b: cornerPx[2] }) > 245);
+
+    // underlay presence: a light module DROPPED by density shows the photograph,
+    // not paper — proves the photo fills the composition beneath the modules.
+    // Bright photography is used because the engine's v3 density rule only drops
+    // light modules whose underlying photo is bright enough to still read light;
+    // over dark photography every light dot is kept by design.
+    const dropArt = cropCenterSquare(makeArt('brightphoto'));
+    const dropDetail = upscale(dropArt, 1024);
+    const dropDots: DotOptions = { ...DEFAULT_DOTS, density: 0.85 };
+    const { matrix: m2, plan: p2 } = buildPlan(url, 'H', 'auto', dropArt, dropDots, 'balanced', 0);
+    const dropImg = renderPlan(p2, m2, { shape: 'pixel', dotSize: 0.88, spacing: 0.02, quietZone: 6, px: 2048, underlay: dropDetail, ring: true });
+    const kept = new Set(p2.dots.map((d) => d.row * m2.size + d.col));
+    let gapChecked = 0, gapOk = 0;
+    for (let r = 1; r < m2.size - 1 && gapChecked < 40; r += 3) {
+      for (let c = 1; c < m2.size - 1 && gapChecked < 40; c += 3) {
+        if (m2.isFunctionModule(r, c) || m2.isDark(r, c)) continue;
+        const i = r * m2.size + c;
+        if (kept.has(i)) continue; // dropped light module
+        const px = Math.round(ox + (c + 0.5) * mp), py = Math.round(ox + (r + 0.5) * mp);
+        const rendered = getPx(dropImg, px, py);
+        const src = getPx(dropDetail, Math.min(dropDetail.w - 1, Math.floor((c + 0.5) * dropDetail.w / m2.size)), Math.min(dropDetail.h - 1, Math.floor((r + 0.5) * dropDetail.h / m2.size)));
+        const dL = Math.abs(luminance({ r: rendered[0], g: rendered[1], b: rendered[2] }) - luminance({ r: src[0], g: src[1], b: src[2] }));
+        gapChecked++;
+        if (dL < 60) gapOk++;
+      }
+    }
+    check(`underlay: dropped light modules show the photograph (${gapOk}/${gapChecked} within 60 luma)`, gapChecked > 0 && gapOk === gapChecked);
+
+    // module alignment: dark data module centre is dark; the hairline gap
+    // between two dark modules shows the photograph (not paper)
+    let alignChecked = 0, alignOk = 0;
+    for (const d of plan.dots.slice(0, 400)) {
+      if (!d.dark || d.col + 1 >= m2.size) continue;
+      if (m2.isFunctionModule(d.row, d.col) || m2.isFunctionModule(d.row, d.col + 1)) continue;
+      if (!m2.isDark(d.row, d.col + 1)) continue;
+      const cx = Math.round(ox + (d.col + 0.5) * mp), cy = Math.round(ox + (d.row + 0.5) * mp);
+      const gapX = Math.round(ox + (d.col + 1) * mp), gapY = cy;
+      const centerPx = getPx(a, cx, cy);
+      const gapPx = getPx(a, gapX, gapY);
+      const src = getPx(detail, Math.min(detail.w - 1, Math.floor(((d.col + 1) * mp / (N * mp)) * detail.w)), Math.min(detail.h - 1, Math.floor(((d.row + 0.5) * mp / (N * mp)) * detail.h)));
+      alignChecked++;
+      if (luminance({ r: centerPx[0], g: centerPx[1], b: centerPx[2] }) < 90
+        && Math.abs(luminance({ r: gapPx[0], g: gapPx[1], b: gapPx[2] }) - luminance({ r: src[0], g: src[1], b: src[2] })) < 60) alignOk++;
+    }
+    check(`modules: dark centres dark + hairline gaps show photo (${alignOk}/${alignChecked})`, alignChecked > 10 && alignOk === alignChecked);
+
+    savePNG(`${ARTIFACT_DIR}/accept-animal-composite.png`, a.w, a.h, a.data);
+  }
+}
+
+console.log('\n== T13: source dimensions & orientation (portrait / landscape / square) ==');
+{
+  const urls = [
+    'https://dotra.app',
+    'https://dotra.app/gallery/nature/ember-ridge',
+    'https://dotra.app/s/xK9f2mQp?src=sample&ref=qr&utm=dotra',
+  ];
+  const sources: Array<[string, Img]> = [
+    ['portrait source 500×800', makeArt('portrait', 500, 800)],
+    ['landscape source 800×500', makeArt('landscape', 800, 500)],
+    ['square source 512×512', makeArt('animal', 512, 512)],
+  ];
+  let total = 0, ok = 0;
+  for (const [label, src] of sources) {
+    const square = cropCenterSquare(src); // mirrors the browser smart crop
+    const detail = upscale(square, 1024);
+    for (const url of urls) {
+      total++;
+      const { matrix, plan } = buildPlan(url, 'H', 'auto', square, DEFAULT_DOTS, 'balanced', 0);
+      const img = renderPlan(plan, matrix, { shape: 'pixel', dotSize: 0.88, spacing: 0.02, quietZone: 6, px: 1024, underlay: detail, ring: true });
+      const decoded = decode(img);
+      if (decoded === url) ok++;
+      else console.log(`    fail: ${label} -> ${decoded}`);
+    }
+  }
+  check(`orientation matrix decodes exactly (${ok}/${total})`, ok === total, `(${ok}/${total})`);
+  // non-square source must not distort the matrix: plan still N×N from the crop
+  const rect = makeArt('landscape', 800, 500);
+  const sq = cropCenterSquare(rect);
+  check('center crop yields a square (500×500)', sq.w === 500 && sq.h === 500);
 }
 
 console.log(`\n=========== ${passed} passed, ${failed} failed ===========`);

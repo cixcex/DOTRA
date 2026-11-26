@@ -143,6 +143,8 @@ export function Studio() {
     dotSize: effDotSize,
     spacing: effSpacing,
     fragmentSource: gen.state.plan?.fragmentSource ?? null,
+    photoUnderlay: gen.state.processed?.detail ?? null,
+    perforationBorder: qr.perforationBorder,
   };
 
   const { state } = gen;
@@ -283,7 +285,7 @@ export function Studio() {
             <QualitySection preset={preset} onChange={setPreset} />
           </Card>
 
-          <Card title="Dots" subtitle="Shape, size and colour">
+          <Card title="Modules" subtitle="Shape, size and photographic blend">
             <DotsSection dots={dots} onChange={setDots} />
           </Card>
 
