@@ -54,6 +54,11 @@ Faithful to the origin gem's design:
 5. **Photo padding.** The origin gem insets the photograph by padding modules
    so photo content never touches structural patterns; the port keeps this as
    a clamped `photoPadding` option (clamped to `⌊N/2⌋ − 5`).
+6. **Module fill.** `centre` (the origin look) paints the tiny data centre with
+   photo rings; `block` paints every module as one full solid block — the clean
+   big-module look. The photograph is unused in block mode (the grid is pure
+   B/W on white), which is also the most scannable mode of all: it verifies
+   even at 192 px thumbnail scale (T15).
 
 Adaptations for DOTRA: quiet zone is respected (never photo, never noise);
 transparent photo regions fall back to the data colour (origin rule); the
@@ -88,7 +93,10 @@ deterministic TypeScript toolkit (`node-qrcode-toolkit`, antfu lineage, MIT):
 Adaptations: data modules are tone-pinned to B/W ink (the toolkit's coloured
 module fills are disabled — DOTRA never lets module polarity drift for
 aesthetics); the quiet zone stays clean white except for the seeded margin
-noise; every render passes through the same jsQR gate.
+noise; every render passes through the same jsQR gate. Defaults ship visibly
+styled but scan-safe — dot modules, hollow-box finder markers, minimal
+quiet-zone noise — each measured rung-0 safe in T14; the ladder flattens
+whatever the decoder rejects.
 
 **Scan-safety findings (measured with jsQR, T14).** Which styling survives the
 gate is empirical, not aesthetic:

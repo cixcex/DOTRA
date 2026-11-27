@@ -20,11 +20,14 @@ export interface HalftoneOptions {
   subpixels: 3 | 4;
   /** Clean B&W modules between the photograph and the grid edge. */
   photoPadding: number;
+  /** 'centre' = halftone dot (photo rings) · 'block' = full solid module (clean B/W). */
+  moduleFill: 'centre' | 'block';
 }
 
 export const HALFTONE_DEFAULTS: HalftoneOptions = {
   subpixels: 3,
   photoPadding: 2,
+  moduleFill: 'centre',
 };
 
 export interface HalftoneInput {
@@ -54,7 +57,7 @@ export function renderHalftone(input: HalftoneInput, opts: HalftoneOptions): Ras
     w: (N - 2 * pad) * mp,
     h: (N - 2 * pad) * mp,
   };
-  const photoActive = photo !== null && pad * 2 < N - 6 && photoRect.w > 0;
+  const photoActive = opts.moduleFill !== 'block' && photo !== null && pad * 2 < N - 6 && photoRect.w > 0;
   if (photoActive && photo) {
     out.drawCover(photo, photoRect.x, photoRect.y, photoRect.w, photoRect.h);
   }
@@ -70,6 +73,11 @@ export function renderHalftone(input: HalftoneInput, opts: HalftoneOptions): Ras
       const by = oy + r * mp;
 
       if (matrix.isFunctionModule(r, c)) {
+        out.fillRect(bx, by, mp, mp, dataColor);
+        continue;
+      }
+
+      if (opts.moduleFill === 'block') {
         out.fillRect(bx, by, mp, mp, dataColor);
         continue;
       }

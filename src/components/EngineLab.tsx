@@ -58,7 +58,7 @@ function metricDisplay(m: EngineMetrics | null) {
 
 export function EngineLab({ urlInput, sourceImg, crop, adjustments, dots, qr, preset }: EngineLabProps) {
   const lab = useEngineLab();
-  const [halftone, setHalftone] = useState<HalftoneOptions>(HALFTONE_DEFAULTS);
+  const [halftone, setHalftone] = useState<HalftoneOptions>({ ...HALFTONE_DEFAULTS, moduleFill: 'block' });
   const [artistic, setArtistic] = useState<ArtisticOptions>(ARTISTIC_DEFAULTS);
   const [exporting, setExporting] = useState<EngineId | 'best' | null>(null);
 
@@ -219,6 +219,14 @@ export function EngineLab({ urlInput, sourceImg, crop, adjustments, dots, qr, pr
                       value={String(halftone.subpixels)}
                       onChange={(v) => setHalftone((h) => ({ ...h, subpixels: Number(v) as 3 | 4 }))}
                     />
+                    <Segmented<string>
+                      options={[
+                        { id: 'block', label: 'Solid blocks', hint: 'clean big modules — photograph unused' },
+                        { id: 'centre', label: 'Halftone dots', hint: 'tiny centre carries data, rings show photo' },
+                      ]}
+                      value={halftone.moduleFill}
+                      onChange={(v) => setHalftone((h) => ({ ...h, moduleFill: v as 'centre' | 'block' }))}
+                    />
                     <SliderRow
                       label="Photo padding"
                       value={halftone.photoPadding}
@@ -230,8 +238,10 @@ export function EngineLab({ urlInput, sourceImg, crop, adjustments, dots, qr, pr
                       hint="Clean B&W modules between the photograph and the grid edge."
                     />
                     <p className="text-[11px] text-mute leading-relaxed">
-                      Centre sub-pixel carries the data; the ring shows the photograph.
-                      Error correction is forced to level H, exactly like the origin gem.
+                      Halftone dots: the centre sub-pixel carries the data, the ring shows the
+                      photograph. Solid blocks: one clean module per cell, photograph unused —
+                      the most scannable mode of all. Error correction is forced to level H,
+                      exactly like the origin gem.
                     </p>
                   </div>
                 )}

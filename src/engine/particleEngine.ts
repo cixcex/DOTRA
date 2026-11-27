@@ -111,6 +111,20 @@ export function scatterEnvelope(u: number, d: number, w: number): number {
   return 1 - (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
 }
 
+/**
+ * Receipt preset — paper-feed geometry. The composition is printed on a paper
+ * strip that emerges from a slot at the top of the frame: at u = 0 the whole
+ * QR sits above the slot (nothing visible below it), at u = 1 it rests at its
+ * final position. Returns the QR grid's top-edge y at time u.
+ */
+export function receiptTop(u: number, size: number, modulePx: number, matrixSize: number, quietZone: number): number {
+  const origin = quietZone * modulePx;
+  const gridH = matrixSize * modulePx;
+  const slotY = size * 0.08;
+  const f = smooth01(clamp(u / 0.82, 0, 1));
+  return origin + (slotY - gridH - origin) * (1 - f);
+}
+
 /** Global photo→QR colour transition for data dots (u = 0..1). */
 export function photoBlendT(u: number): number {
   return smooth01((u - 0.52) / 0.26);
@@ -268,6 +282,13 @@ export function createScene(
         dur = 0.32 + h1 * 0.16;
         break;
       }
+      case 'receipt': {
+        sx = tx;
+        sy = ty;
+        delay = 0.02 + (row / N) * 0.5 + h3 * 0.04;
+        dur = 0.3 + h1 * 0.15;
+        break;
+      }
     }
 
     particles.push({
@@ -385,6 +406,21 @@ export function drawSceneFrame(ctx: CanvasRenderingContext2D, scene: ParticleSce
     o.renderStatic(o.staticCanvas, o.plan, o.matrix, o.renderOpts);
     ctx.drawImage(o.staticCanvas, 0, 0, size, size);
     return;
+  }
+
+  // Receipt preset: the whole composition is paper emerging from a slot at the
+  // top — translate it down as it feeds out, clip everything still "inside the
+  // printer", and draw the slot bar (faded out before u = 1 so the final
+  // frame stays pixel-clean).
+  const receipt = preset === 'receipt';
+  const slotY = receipt ? size * 0.08 : 0;
+  if (receipt) {
+    const top = receiptTop(u, size, modulePx, scene.matrixSize, scene.quietZone);
+    ctx.save();
+    ctx.translate(0, top - scene.origin);
+    ctx.beginPath();
+    ctx.rect(0, slotY, size, size - slotY);
+    ctx.clip();
   }
 
   const ease = EASINGS[o.easing];
@@ -537,6 +573,24 @@ export function drawSceneFrame(ctx: CanvasRenderingContext2D, scene: ParticleSce
     ctx.globalAlpha = smooth01((u - 0.88) / 0.08);
     drawPerforationRing(ctx, N, scene.quietZone, modulePx, scene.origin);
     ctx.globalAlpha = 1;
+  }
+
+  if (receipt) {
+    ctx.restore();
+    // printer slot bar — gone by u = 1 so the final frame stays pixel-clean
+    const barA = u > 0.84 ? 1 - smooth01((u - 0.84) / 0.14) : 1;
+    if (barA > 0.001) {
+      const bw = size * 0.34;
+      const bh = Math.max(3, size * 0.008);
+      ctx.globalAlpha = barA;
+      ctx.fillStyle = '#0a0a0a';
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(size / 2 - bw / 2, slotY - bh / 2, bw, bh, bh / 2);
+      else ctx.rect(size / 2 - bw / 2, slotY - bh / 2, bw, bh);
+      ctx.fill();
+      ctx.globalAlpha = barA * 0.16;
+      ctx.fillRect(size / 2 - bw / 2, slotY + bh / 2, bw, size * 0.012);
+    }
   }
 
   ctx.globalAlpha = 1;

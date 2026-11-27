@@ -40,8 +40,8 @@ export interface ArtisticOptions {
 }
 
 export const ARTISTIC_DEFAULTS: ArtisticOptions = {
-  pixelStyle: 'square',
-  markerShape: 'square',
+  pixelStyle: 'dot',
+  markerShape: 'box',
   markerInner: 'square',
   marginNoise: true,
   marginNoiseRate: 0.25,

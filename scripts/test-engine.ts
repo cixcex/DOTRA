@@ -24,10 +24,11 @@ import jsQR from 'jsqr';
 import { encodeQR, buildFunctionModuleMask } from '../src/engine/qrGenerator';
 import { buildDotPlanFromSamples, ringSquares, type DotPlan } from '../src/engine/dotRenderer';
 import { PRESET_TONES, REPAIR_TONES } from '../src/utils/contrastOptimizer';
-import { createScene, scatterEnvelope, photoBlendT, structuralBlendT } from '../src/engine/particleEngine';
+import { createScene, scatterEnvelope, photoBlendT, structuralBlendT, receiptTop } from '../src/engine/particleEngine';
 import type { MatrixInfo, RGB, DotOptions, QualityPreset, ECLevel, TargetVersion, DotShape } from '../src/engine/types';
 import { makeImage, savePNG, fillRect, fillCircle, getPx, setPx, gradient, clamp255, makeNoise2D, forEachPixel, mixc, drawCover } from './pngkit.mjs';
 import { renderHalftone, renderArtistic, computeMetrics, Raster, HALFTONE_DEFAULTS, ARTISTIC_DEFAULTS } from '../src/engines';
+import { ANIMATION_PRESETS } from '../src/lib/constants';
 import type { HalftoneOptions, ArtisticOptions } from '../src/engines';
 
 type Img = ReturnType<typeof makeImage>;
@@ -1177,10 +1178,10 @@ console.log('\n== T14: Engine Lab — three engines, one decoder (spec §14) =='
     const mH = encodeQR(url, 'H', 'auto').matrix;
     const photo = toRaster(makeArt('saturated'));
     const ladder: Array<{ label: string; opts: HalftoneOptions; photoOn: boolean }> = [
-      { label: '3×3 sub-pixels, photo to grid edge', opts: { subpixels: 3, photoPadding: 0 }, photoOn: true },
-      { label: '4×4 larger data centre', opts: { subpixels: 4, photoPadding: 0 }, photoOn: true },
-      { label: '4×4 + photo padding', opts: { subpixels: 4, photoPadding: 2 }, photoOn: true },
-      { label: 'solid modules (photo off)', opts: { subpixels: 4, photoPadding: 0 }, photoOn: false },
+      { label: '3×3 sub-pixels, photo to grid edge', opts: { subpixels: 3, photoPadding: 0, moduleFill: 'centre' }, photoOn: true },
+      { label: '4×4 larger data centre', opts: { subpixels: 4, photoPadding: 0, moduleFill: 'centre' }, photoOn: true },
+      { label: '4×4 + photo padding', opts: { subpixels: 4, photoPadding: 2, moduleFill: 'centre' }, photoOn: true },
+      { label: 'solid modules (photo off)', opts: { subpixels: 4, photoPadding: 0, moduleFill: 'centre' }, photoOn: false },
     ];
     let rescued = -1;
     for (let i = 0; i < ladder.length; i++) {
@@ -1279,6 +1280,77 @@ console.log('\n== T14: Engine Lab — three engines, one decoder (spec §14) =='
     const dmp = 720 / (mA.size + 12);
     const coreLuma = dR.luma(Math.round(9.5 * dmp), Math.round(9.5 * dmp));
     check('artistic diamond marker core renders dark (bug fix)', coreLuma < 100, `core luma ${coreLuma.toFixed(0)}`);
+  }
+
+  // ——— T15: receipt-print animation + halftone solid-block mode ———
+  console.log('\n== T15: receipt animation + halftone solid blocks ==');
+  {
+    // receipt preset is registered and builds a row-ordered scene
+    check("'receipt' is a registered animation preset", ANIMATION_PRESETS.some((p) => p.id === 'receipt'));
+    const m = encodeQR(urls[0], 'M', 'auto').matrix;
+    const { plan } = buildPlan(urls[0], 'M', 'auto', makeArt('portrait'), DEFAULT_DOTS, 'balanced', 0);
+    const mp540 = 540 / (m.size + 12);
+    const scene = createScene(plan, m, 540, 6, { preset: 'receipt', duration: 2.4, speed: 1, intensity: 0.5, startDistance: 0.9, easing: 'easeOut' });
+    check(`receipt scene: one particle per kept module (${scene.particles.length})`, scene.particles.length > 0 && scene.particles.length <= m.size * m.size);
+    check('receipt scene: preset round-trips', scene.preset === 'receipt');
+    // row-ordered cascade: the minimum delay per row is non-decreasing top→bottom
+    const byRow = new Map<number, number>();
+    for (const p of scene.particles) {
+      const row = Math.round((p.ty - scene.origin) / scene.modulePx - 0.5);
+      byRow.set(row, Math.min(byRow.get(row) ?? 1, p.delay));
+    }
+    let mono = true, lastDelay = -1;
+    for (const r of [...byRow.keys()].sort((a, b) => a - b)) {
+      const d = byRow.get(r)!;
+      if (d < lastDelay - 1e-9) mono = false;
+      lastDelay = d;
+    }
+    check('receipt cascade: per-row delays are top-down ordered', mono);
+    // paper-feed geometry
+    const gridH = m.size * mp540;
+    const t0 = receiptTop(0, 540, mp540, m.size, 6);
+    const t1 = receiptTop(1, 540, mp540, m.size, 6);
+    check('receipt geometry: starts fully above the slot (nothing visible)', t0 + gridH <= 540 * 0.08 + 1e-6, `bottom edge ${ (t0 + gridH).toFixed(1)} vs slot ${(540 * 0.08).toFixed(1)}`);
+    check('receipt geometry: ends at the final position', Math.abs(t1 - 6 * mp540) < 1e-6);
+    let monoTop = true, prevTop = -Infinity;
+    for (let i = 0; i <= 20; i++) {
+      const t = receiptTop(i / 20, 540, mp540, m.size, 6);
+      if (t < prevTop - 1e-9) monoTop = false;
+      prevTop = t;
+    }
+    check('receipt geometry: paper feed is monotone', monoTop);
+  }
+  {
+    // halftone solid-block mode: full modules, no sub-pixels, no photo rings
+    const mH = encodeQR(urls[0], 'H', 'auto').matrix;
+    const photo = toRaster(makeArt('saturated'));
+    const blockOpts: HalftoneOptions = { ...HALFTONE_DEFAULTS, moduleFill: 'block' };
+    const raster = renderHalftone({ matrix: mH, photo, size: 1024, quietZone: Q }, blockOpts);
+    check('halftone solid blocks: jsQR verifies the exact URL', decode(fromRaster(raster)) === urls[0]);
+    const met = computeMetrics({ raster, photo, photoRect: { x: 0, y: 0, w: 1024, h: 1024 }, matrix: mH, quietZone: Q, size: 1024, verified: true });
+    check('halftone solid blocks: separation near maximum', met.separation >= 240, met.separation.toFixed(1));
+    // module cells are fully solid: interior sample must carry no photo variance
+    const mp = 1024 / (mH.size + 2 * Q);
+    let cellStd = -1;
+    outer: for (let c = 10; c < mH.size - 10; c++) {
+      if (mH.isDark(12, c) && !mH.isFunctionModule(12, c)) {
+        const vals: number[] = [];
+        const bx = Q * mp + c * mp, by = Q * mp + 12 * mp;
+        for (let y = Math.floor(by + mp * 0.2); y < by + mp * 0.8; y += 2) {
+          for (let x = Math.floor(bx + mp * 0.2); x < bx + mp * 0.8; x += 2) {
+            const px = raster.get(x, y);
+            vals.push(0.2126 * px[0] + 0.7152 * px[1] + 0.0722 * px[2]);
+          }
+        }
+        const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+        cellStd = Math.sqrt(vals.reduce((a, v) => a + (v - mean) ** 2, 0) / vals.length);
+        break outer;
+      }
+    }
+    check('halftone solid blocks: module cell is uniform (no photo rings)', cellStd >= 0 && cellStd < 8, cellStd.toFixed(2));
+    // block mode at thumbnail scale still verifies (solid = safest)
+    const thumb = renderHalftone({ matrix: mH, photo, size: 192, quietZone: 2 }, blockOpts);
+    check('halftone solid blocks: verifies at 192px thumbnail', decode(fromRaster(thumb)) === urls[0]);
   }
 
   // ——— determinism ———

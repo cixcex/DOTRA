@@ -199,7 +199,7 @@ export function useEngineLab() {
       const hmp = PREVIEW_PX / (matrixH.size + 2 * qz);
       const hox = qz * hmp;
       const ladder: { label: string; opts: HalftoneOptions; photo: boolean }[] = [
-        { label: 'halftone 3×3 sub-pixels', opts: args.halftone, photo: true },
+        { label: args.halftone.moduleFill === 'block' ? 'solid blocks (clean)' : 'halftone 3×3 sub-pixels', opts: args.halftone, photo: true },
         { label: 'larger data centre (4×4)', opts: { ...args.halftone, subpixels: 4 }, photo: true },
         { label: '4×4 + photo to grid edge', opts: { ...args.halftone, subpixels: 4, photoPadding: 0 }, photo: true },
         { label: 'solid modules (photo off)', opts: { ...args.halftone, subpixels: 4 }, photo: false },

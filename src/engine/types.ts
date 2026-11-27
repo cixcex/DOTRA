@@ -10,7 +10,7 @@ export type DotShape = 'circle' | 'rounded' | 'pixel' | 'fragment' | 'soft';
 
 export type QualityPreset = 'photo' | 'balanced' | 'scan';
 
-export type AnimationPreset = 'gather' | 'flow' | 'pulse' | 'orbit' | 'reveal';
+export type AnimationPreset = 'gather' | 'flow' | 'pulse' | 'orbit' | 'reveal' | 'receipt';
 
 export type EasingStyle = 'easeOut' | 'easeInOut' | 'spring' | 'linear';
 
