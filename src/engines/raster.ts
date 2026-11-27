@@ -159,6 +159,42 @@ export class Raster {
     }
   }
 
+  /**
+   * Nearest-sample a sub-region of `src` (source rect rsx,rsy,rsw,rsh) into
+   * the dest rect — per-module photographic tiles for the Engine Lab engines.
+   */
+  drawCoverRegion(src: Raster, rsx: number, rsy: number, rsw: number, rsh: number, dx: number, dy: number, dw: number, dh: number): void {
+    if (dw <= 0 || dh <= 0 || rsw <= 0 || rsh <= 0) return;
+    const ix = Math.floor(dx), iy = Math.floor(dy);
+    const iw = Math.ceil(dw), ih = Math.ceil(dh);
+    for (let y = 0; y < ih; y++) {
+      const py = rsy + ((y + 0.5) / ih) * rsh;
+      const syi = Math.min(src.h - 1, Math.max(0, Math.floor(py)));
+      for (let x = 0; x < iw; x++) {
+        const px = rsx + ((x + 0.5) / iw) * rsw;
+        const sxi = Math.min(src.w - 1, Math.max(0, Math.floor(px)));
+        const i = src.idx(sxi, syi);
+        this.set(ix + x, iy + y, [src.data[i], src.data[i + 1], src.data[i + 2], src.data[i + 3]]);
+      }
+    }
+  }
+
+  /** Blend a rect toward a solid colour by alpha (0..1) — tone-pinning for photo tiles. */
+  blendRect(x: number, y: number, w: number, h: number, c: RGBA, alpha: number): void {
+    const x0 = Math.max(0, Math.floor(x)), y0 = Math.max(0, Math.floor(y));
+    const x1 = Math.min(this.w, Math.ceil(x + w)), y1 = Math.min(this.h, Math.ceil(y + h));
+    const a = Math.min(1, Math.max(0, alpha));
+    for (let py = y0; py < y1; py++) {
+      for (let px = x0; px < x1; px++) {
+        const i = this.idx(px, py);
+        this.data[i] += (c[0] - this.data[i]) * a;
+        this.data[i + 1] += (c[1] - this.data[i + 1]) * a;
+        this.data[i + 2] += (c[2] - this.data[i + 2]) * a;
+        this.data[i + 3] += (c[3] - this.data[i + 3]) * a;
+      }
+    }
+  }
+
   luma(x: number, y: number): number {
     const [r, g, b] = this.get(x, y);
     return lumaOf(r, g, b);
@@ -184,6 +220,27 @@ function pointInPoly(x: number, y: number, pts: [number, number][]): boolean {
 // ---------------------------------------------------------------------------
 
 /** Separable box blur with edge-replicate window — matches canvas blur look. */
+/** Cover-fit source window of `src` inside a destW×destH rect — shared by the
+ *  photographic module tiles to map a module rect back to photo pixels. */
+export function coverWindow(srcW: number, srcH: number, destW: number, destH: number): { sx: number; sy: number; sw: number; sh: number } {
+  const scale = Math.max(destW / srcW, destH / srcH);
+  const sw = destW / scale;
+  const sh = destH / scale;
+  return { sx: (srcW - sw) / 2, sy: (srcH - sh) / 2, sw, sh };
+}
+
+/** Average luma over the 3×3 module centre — the polarity guard samples here. */
+export function centreLuma(out: Raster, cx: number, cy: number): number {
+  const ix = Math.round(cx), iy = Math.round(cy);
+  let s = 0, n = 0;
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      s += out.luma(ix + dx, iy + dy); n++;
+    }
+  }
+  return s / n;
+}
+
 export function boxBlur(src: Raster, radius: number): Raster {
   const r = Math.max(1, Math.round(radius));
   const out = new Raster(src.w, src.h);

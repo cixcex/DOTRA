@@ -198,12 +198,19 @@ export function useEngineLab() {
       const qz = args.qr.quietZone;
       const hmp = PREVIEW_PX / (matrixH.size + 2 * qz);
       const hox = qz * hmp;
-      const ladder: { label: string; opts: HalftoneOptions; photo: boolean }[] = [
-        { label: args.halftone.moduleFill === 'block' ? 'solid blocks (clean)' : 'halftone 3×3 sub-pixels', opts: args.halftone, photo: true },
-        { label: 'larger data centre (4×4)', opts: { ...args.halftone, subpixels: 4 }, photo: true },
-        { label: '4×4 + photo to grid edge', opts: { ...args.halftone, subpixels: 4, photoPadding: 0 }, photo: true },
-        { label: 'solid modules (photo off)', opts: { ...args.halftone, subpixels: 4 }, photo: false },
-      ];
+      const photoMode = args.halftone.moduleFill === 'photo';
+      const ladder: { label: string; opts: HalftoneOptions; photo: boolean }[] = photoMode
+        ? [
+            { label: 'photo blocks (tone-pinned tiles)', opts: { ...args.halftone, photoStrength: 0.45 }, photo: true },
+            { label: 'photo blocks (stronger tone)', opts: { ...args.halftone, photoStrength: 0.65 }, photo: true },
+            { label: 'solid B/W blocks', opts: { ...args.halftone, moduleFill: 'block' }, photo: false },
+          ]
+        : [
+            { label: args.halftone.moduleFill === 'block' ? 'solid blocks (clean)' : 'halftone 3×3 sub-pixels', opts: args.halftone, photo: true },
+            { label: 'larger data centre (4×4)', opts: { ...args.halftone, subpixels: 4 }, photo: true },
+            { label: '4×4 + photo to grid edge', opts: { ...args.halftone, subpixels: 4, photoPadding: 0 }, photo: true },
+            { label: 'solid modules (photo off)', opts: { ...args.halftone, subpixels: 4 }, photo: false },
+          ];
       let done = false;
       for (let li = 0; li < ladder.length && !done; li++) {
         const rung = ladder[li];
@@ -246,8 +253,9 @@ export function useEngineLab() {
         { label: 'effects + margin noise off', opts: { ...args.artistic, crystalizeRadius: 0, liquidifyRadius: 0, perspective: 0, marginNoise: false } },
         { label: 'square finder markers', opts: { ...args.artistic, crystalizeRadius: 0, liquidifyRadius: 0, perspective: 0, marginNoise: false, markerShape: 'square', markerInner: 'square' } },
         { label: 'plain square modules', opts: { ...args.artistic, crystalizeRadius: 0, liquidifyRadius: 0, perspective: 0, marginNoise: false, pixelStyle: 'square', markerShape: 'square', markerInner: 'square' } },
-        { label: 'default black & white palette', opts: { ...args.artistic, crystalizeRadius: 0, liquidifyRadius: 0, perspective: 0, marginNoise: false, pixelStyle: 'square', markerShape: 'square', markerInner: 'square', lightColor: '#ffffff', darkColor: '#0a0a0a' } },
-        { label: 'photograph background off', opts: { ...args.artistic, crystalizeRadius: 0, liquidifyRadius: 0, perspective: 0, marginNoise: false, pixelStyle: 'square', markerShape: 'square', markerInner: 'square', lightColor: '#ffffff', darkColor: '#0a0a0a', photoBackground: false } },
+        { label: 'photograph modules off', opts: { ...args.artistic, crystalizeRadius: 0, liquidifyRadius: 0, perspective: 0, marginNoise: false, pixelStyle: 'square', markerShape: 'square', markerInner: 'square', photoModules: false } },
+        { label: 'default black & white palette', opts: { ...args.artistic, crystalizeRadius: 0, liquidifyRadius: 0, perspective: 0, marginNoise: false, pixelStyle: 'square', markerShape: 'square', markerInner: 'square', photoModules: false, lightColor: '#ffffff', darkColor: '#0a0a0a' } },
+        { label: 'photograph background off', opts: { ...args.artistic, crystalizeRadius: 0, liquidifyRadius: 0, perspective: 0, marginNoise: false, pixelStyle: 'square', markerShape: 'square', markerInner: 'square', photoModules: false, lightColor: '#ffffff', darkColor: '#0a0a0a', photoBackground: false } },
       ];
       let done = false;
       for (let li = 0; li < ladder.length && !done; li++) {

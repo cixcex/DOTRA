@@ -54,11 +54,15 @@ Faithful to the origin gem's design:
 5. **Photo padding.** The origin gem insets the photograph by padding modules
    so photo content never touches structural patterns; the port keeps this as
    a clamped `photoPadding` option (clamped to `⌊N/2⌋ − 5`).
-6. **Module fill.** `centre` (the origin look) paints the tiny data centre with
-   photo rings; `block` paints every module as one full solid block — the clean
-   big-module look. The photograph is unused in block mode (the grid is pure
-   B/W on white), which is also the most scannable mode of all: it verifies
-   even at 192 px thumbnail scale (T15).
+6. **Module fill.** `photo` (the lab default) paints one big tile per module —
+   the photograph cover-sampled into the cell, tone-pinned toward the module's
+   polarity pole (0.45 blend toward black / white); any tile whose 3×3 centre
+   lands on the wrong side of the decoder threshold (luma > 96 dark / < 160
+   light) falls back to solid data colour — scan-safety by construction, the
+   same philosophy as the composite's band poles. `centre` is the origin
+   halftone look (tiny data centre + photo rings); `block` is pure B/W — the
+   most scannable mode, verifying even at 192 px thumbnail scale (T15). The
+   photo fill carries its own ladder: tone 0.45 → tone 0.65 → solid blocks.
 
 Adaptations for DOTRA: quiet zone is respected (never photo, never noise);
 transparent photo regions fall back to the data colour (origin rule); the
@@ -96,7 +100,10 @@ aesthetics); the quiet zone stays clean white except for the seeded margin
 noise; every render passes through the same jsQR gate. Defaults ship visibly
 styled but scan-safe — dot modules, hollow-box finder markers, minimal
 quiet-zone noise — each measured rung-0 safe in T14; the ladder flattens
-whatever the decoder rejects.
+whatever the decoder rejects. `photoModules` (on by default) paints
+ tone-pinned photograph tiles inside the data modules in both polarities —
+ your image stays visible inside the QR itself — with the same wrong-polarity
+ fallback to solid ink; the ladder can switch the tiles off (rung 4).
 
 **Scan-safety findings (measured with jsQR, T14).** Which styling survives the
 gate is empirical, not aesthetic:
@@ -148,17 +155,20 @@ All metrics are computed on the **rendered raster**, not internal state:
 Every engine escalates rendering parameters only — the matrix and the URL are
 never touched:
 
-| Engine | Rung 0 | Rung 1 | Rung 2 | Rung 3 | Rung 4 | Rung 5 |
-| --- | --- | --- | --- | --- | --- | --- |
-| Composite | Studio defaults | influence ↓ 0.35 | influence 0.2 + strict B&W | full-size square modules | ring off | EC-H + influence 0 |
-| Halftone | 3×3 sub-pixels, photo to grid edge | 4×4 centre | + photo padding | solid data modules | — | — |
-| Artistic | toolkit styling (user options) | effects + margin noise off | square finder markers | plain square modules | default B&W palette | photograph background off |
+| Engine | Rung 0 | Rung 1 | Rung 2 | Rung 3 | Rung 4 | Rung 5 | Rung 6 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Composite | Studio defaults | influence ↓ 0.35 | influence 0.2 + strict B&W | full-size square modules | ring off | EC-H + influence 0 | — |
+| Halftone (dots / blocks) | 3×3 sub-pixels, photo to grid edge | 4×4 centre | + photo padding | solid data modules | — | — | — |
+| Halftone (photo fill) | tone-pinned photo tiles (0.45) | stronger tone (0.65) | solid B/W blocks | — | — | — | — |
+| Artistic | toolkit styling (user options) | effects + margin noise off | square finder markers | plain square modules | photograph modules off | default B&W palette | photograph background off |
 
 Each rung re-renders and re-verifies the actual pixels; the UI replays the
 exact rung that verified. The artistic ladder was calibrated against jsQR at
 the 720 px preview size (T14): styled defaults fail on busy photographs and
 large matrices, and the final rung — dropping the photograph background for a
-clean white frame — is the same escape hatch the halftone engine uses.
+clean white frame — is the same escape hatch the halftone engine uses. The
+halftone ladder depends on the module fill: the photo fill escalates the tone
+strength before falling back to solid blocks.
 
 ## Attribution & licenses
 

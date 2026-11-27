@@ -58,7 +58,7 @@ function metricDisplay(m: EngineMetrics | null) {
 
 export function EngineLab({ urlInput, sourceImg, crop, adjustments, dots, qr, preset }: EngineLabProps) {
   const lab = useEngineLab();
-  const [halftone, setHalftone] = useState<HalftoneOptions>({ ...HALFTONE_DEFAULTS, moduleFill: 'block' });
+  const [halftone, setHalftone] = useState<HalftoneOptions>({ ...HALFTONE_DEFAULTS, moduleFill: 'photo' });
   const [artistic, setArtistic] = useState<ArtisticOptions>(ARTISTIC_DEFAULTS);
   const [exporting, setExporting] = useState<EngineId | 'best' | null>(null);
 
@@ -221,11 +221,12 @@ export function EngineLab({ urlInput, sourceImg, crop, adjustments, dots, qr, pr
                     />
                     <Segmented<string>
                       options={[
-                        { id: 'block', label: 'Solid blocks', hint: 'clean big modules — photograph unused' },
+                        { id: 'photo', label: 'Photo blocks', hint: 'big tiles carry your image, tone-pinned to the data' },
                         { id: 'centre', label: 'Halftone dots', hint: 'tiny centre carries data, rings show photo' },
+                        { id: 'block', label: 'Solid blocks', hint: 'clean B/W modules — most scannable' },
                       ]}
                       value={halftone.moduleFill}
-                      onChange={(v) => setHalftone((h) => ({ ...h, moduleFill: v as 'centre' | 'block' }))}
+                      onChange={(v) => setHalftone((h) => ({ ...h, moduleFill: v as 'centre' | 'photo' | 'block' }))}
                     />
                     <SliderRow
                       label="Photo padding"
@@ -238,10 +239,10 @@ export function EngineLab({ urlInput, sourceImg, crop, adjustments, dots, qr, pr
                       hint="Clean B&W modules between the photograph and the grid edge."
                     />
                     <p className="text-[11px] text-mute leading-relaxed">
-                      Halftone dots: the centre sub-pixel carries the data, the ring shows the
-                      photograph. Solid blocks: one clean module per cell, photograph unused —
-                      the most scannable mode of all. Error correction is forced to level H,
-                      exactly like the origin gem.
+                      Photo blocks: one big tile per module carrying the photograph, tone-pinned
+                      to the data (wrong-polarity centres fall back to solid ink). Halftone dots:
+                      tiny centre carries the data, rings show the photo. Solid blocks: clean
+                      B/W. Error correction is forced to level H, exactly like the origin gem.
                     </p>
                   </div>
                 )}
@@ -283,6 +284,12 @@ export function EngineLab({ urlInput, sourceImg, crop, adjustments, dots, qr, pr
                       checked={artistic.photoBackground}
                       onChange={(v) => setArtistic((a) => ({ ...a, photoBackground: v }))}
                       hint="Cover-fit photo behind the whole composition; gaps and noise show it."
+                    />
+                    <Toggle
+                      label="Photograph in modules"
+                      checked={artistic.photoModules}
+                      onChange={(v) => setArtistic((a) => ({ ...a, photoModules: v }))}
+                      hint="Tone-pinned photo tiles inside the modules — your image stays visible; tiles that break polarity fall back to solid ink."
                     />
                     <Toggle
                       label="Margin noise"
@@ -384,7 +391,9 @@ export function EngineLab({ urlInput, sourceImg, crop, adjustments, dots, qr, pr
           Fair-comparison rules: one encoded URL (never changes), one photograph, one shared matrix
           (the halftone engine re-encodes at EC level H per its origin design), identical
           quiet zone, and the same jsQR gate on the actual exported pixels. GIF/MP4 animation
-          exports remain a Composer feature — the Lab compares final frames.
+          exports remain a Composer feature — the Lab compares final frames. The assembly
+          animations — including the receipt-printer / billing-machine preset — live in the
+          Composer tab → Animation → “Receipt printer”, downloadable as GIF/MP4.
         </p>
       </div>
     </div>

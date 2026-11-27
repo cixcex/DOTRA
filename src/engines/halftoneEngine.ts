@@ -13,21 +13,25 @@
 // ---------------------------------------------------------------------------
 
 import type { MatrixInfo } from '../engine/types';
-import { Raster, WHITE, BLACK, type RGBA } from './raster';
+import { Raster, WHITE, BLACK, coverWindow, centreLuma, type RGBA } from './raster';
 
 export interface HalftoneOptions {
   /** k×k sub-pixels per module. 3 = original visual-qrcode look. */
   subpixels: 3 | 4;
   /** Clean B&W modules between the photograph and the grid edge. */
   photoPadding: number;
-  /** 'centre' = halftone dot (photo rings) · 'block' = full solid module (clean B/W). */
-  moduleFill: 'centre' | 'block';
+  /** 'centre' = halftone dot (photo rings) · 'photo' = full-module tone-pinned
+   *  photograph tile · 'block' = full solid module (clean B/W). */
+  moduleFill: 'centre' | 'photo' | 'block';
+  /** 'photo' fill only: blend strength toward the module's polarity pole (0..1). */
+  photoStrength: number;
 }
 
 export const HALFTONE_DEFAULTS: HalftoneOptions = {
   subpixels: 3,
   photoPadding: 2,
   moduleFill: 'centre',
+  photoStrength: 0.45,
 };
 
 export interface HalftoneInput {
@@ -79,6 +83,26 @@ export function renderHalftone(input: HalftoneInput, opts: HalftoneOptions): Ras
 
       if (opts.moduleFill === 'block') {
         out.fillRect(bx, by, mp, mp, dataColor);
+        continue;
+      }
+
+      if (opts.moduleFill === 'photo') {
+        // One big photographic tile per module, tone-pinned toward the module's
+        // polarity pole; any tile whose centre lands on the wrong side of the
+        // decoder threshold falls back to solid data colour — scan-safety by
+        // construction, exactly like the composite's band poles.
+        const ccx = bx + mp / 2, ccy = by + mp / 2;
+        if (photoActive && photo && ccx >= photoRect.x && ccy >= photoRect.y && ccx < photoRect.x + photoRect.w && ccy < photoRect.y + photoRect.h) {
+          const win = coverWindow(photo.w, photo.h, photoRect.w, photoRect.h);
+          const rsx = win.sx + ((bx - photoRect.x) / photoRect.w) * win.sw;
+          const rsy = win.sy + ((by - photoRect.y) / photoRect.h) * win.sh;
+          out.drawCoverRegion(photo, rsx, rsy, (mp / photoRect.w) * win.sw, (mp / photoRect.h) * win.sh, bx, by, mp, mp);
+          out.blendRect(bx, by, mp, mp, dark ? BLACK : WHITE, Math.min(1, Math.max(0, opts.photoStrength)));
+          const L = centreLuma(out, ccx, ccy);
+          if ((dark && L > 96) || (!dark && L < 160)) out.fillRect(bx, by, mp, mp, dataColor);
+        } else {
+          out.fillRect(bx, by, mp, mp, dataColor);
+        }
         continue;
       }
 

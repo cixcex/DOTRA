@@ -71,11 +71,11 @@ analytics on your content.
 | **Module styles** | Square (default), circle, rounded, soft glow, and **fragment** — true image crops inside each module, tone-clamped for scan safety. |
 | **Photographic integration** | The photograph renders full-bleed beneath the module grid. Image influence, module contrast, black-and-white intensity and colour treatment blend each module toward pure black/white poles — scan-safe by construction, since the poles are the calibrated band extremes. |
 | **Perforation border** | Optional decorative ring of black squares riding the white outer frame — engine-exact geometry (0.24 × module pitch, 4(N+q) squares), gated to a ≥ 3-module quiet zone. |
-| **Six assembly animations** | Gather, flow, pulse, orbit, reveal, receipt print (the QR feeds out of a slot like a billing machine) — with the final animation frame pixel-identical to the verified static render. |
+| **Six assembly animations** | Gather, flow, pulse, orbit, reveal, receipt printer (billing-machine style: the QR feeds out of a slot, top to bottom) — with the final animation frame pixel-identical to the verified static render. |
 | **Three export formats** | PNG (1024/2048/4096 px), MP4 at 1080p30 (WebCodecs + mp4-muxer, explicit WebM fallback), GIF at 480 px. Each export re-verifies at its own resolution. |
 | **24 sample artworks** | Procedurally generated, deterministic, license-free, bundled offline. |
 | **Built-in QR tester** | Scan any QR with your camera or upload a photo and decode it locally. |
-| **Engine Lab** | Three rendering engines — the DOTRA composite, a halftone port of visual-qrcode, and an artistic port of qrcode-toolkit (both MIT) — render the same URL + photograph side-by-side with jsQR verification, fidelity / separation / hue metrics, per-engine repair ladders, and export of any verified panel or the best-scoring one. The halftone engine offers both its signature dot modules and a clean solid-block mode. |
+| **Engine Lab** | Three rendering engines — the DOTRA composite, a halftone port of visual-qrcode, and an artistic port of qrcode-toolkit (both MIT) — render the same URL + photograph side-by-side with jsQR verification, fidelity / separation / hue metrics, per-engine repair ladders, and export of any verified panel or the best-scoring one. The halftone engine offers its signature dot modules, tone-pinned photo blocks (your photograph inside the big modules), and a clean solid-block mode; the artistic engine paints your photograph inside its modules by default. |
 
 ## The verification guarantee
 
@@ -116,7 +116,7 @@ npm run preview      # serve the production build
 | `npm run build` | `tsc --noEmit` + production build to `dist/` |
 | `npm run preview` | Serve the production build locally |
 | `npm run typecheck` | TypeScript check only |
-| `npm run test:engine` | Node engine harness — **192 assertions, 0 failures** |
+| `npm run test:engine` | Node engine harness — **200 assertions, 0 failures** |
 | `npm run gen:assets` | Regenerate favicons + OG cover (with a jsQR-verified photographic composite QR) |
 | `npm run gen:samples` | Regenerate the 24 procedural sample artworks |
 
@@ -206,7 +206,7 @@ the browser uses and rasterizes with geometry-identical math, then decodes with 
   verifies, and the diamond finder-core rendering bug is regression-probed;
   determinism and matrix immutability asserted
 
-**Result: 192 passed, 0 failed.** Full detail in [docs/testing-report.md](docs/testing-report.md).
+**Result: 200 passed, 0 failed.** Full detail in [docs/testing-report.md](docs/testing-report.md).
 
 ## Documentation
 
@@ -221,7 +221,7 @@ the browser uses and rasterizes with geometry-identical math, then decodes with 
 ├── index.html
 ├── public/                  # favicons + OG cover (a real verified DOTRA output)
 ├── scripts/                 # Node tooling: engine tests, asset/sample generators
-│   ├── test-engine.ts       #   192-assertion harness (Node, no DOM)
+│   ├── test-engine.ts       #   200-assertion harness (Node, no DOM)
 │   ├── generate-assets.ts   #   favicons + OG cover
 │   ├── generate-samples.mjs #   24 procedural sample artworks
 │   ├── pngkit.mjs           #   dependency-free PNG codec for Node

@@ -15,7 +15,7 @@
 
 import type { MatrixInfo } from '../engine/types';
 import {
-  Raster, WHITE, hexToRgba, mulberry32, crystalize, liquidify, perspectiveWarp, type RGBA,
+  Raster, WHITE, hexToRgba, mulberry32, crystalize, liquidify, perspectiveWarp, coverWindow, centreLuma, type RGBA,
 } from './raster';
 
 export type ArtisticPixelStyle = 'square' | 'rounded' | 'dot' | 'squircle' | 'row' | 'column';
@@ -34,6 +34,7 @@ export interface ArtisticOptions {
   lightColor: string;
   darkColor: string;
   photoBackground: boolean; // photograph as full-canvas background
+  photoModules: boolean; // tone-pinned photograph tiles inside data modules
   crystalizeRadius: number; // 0 = off
   liquidifyRadius: number; // 0 = off
   perspective: number; // 0..1 keystone tilt
@@ -50,6 +51,7 @@ export const ARTISTIC_DEFAULTS: ArtisticOptions = {
   lightColor: '#ffffff',
   darkColor: '#0a0a0a',
   photoBackground: true,
+  photoModules: true,
   crystalizeRadius: 0,
   liquidifyRadius: 0,
   perspective: 0,
@@ -100,6 +102,18 @@ export function renderArtistic(input: ArtisticInput, opts: ArtisticOptions): Ras
       if (matrix.isFunctionModule(r, c)) {
         // timing / alignment / format / version: solid, safe
         out.fillRect(bx, by, mp, mp, color);
+        continue;
+      }
+
+      if (opts.photoModules && photo) {
+        // photographic tile in BOTH polarities, tone-pinned toward the module's
+        // ink; a tile whose 3×3 centre lands on the wrong side of the decoder
+        // threshold falls back to solid ink — scan-safety by construction.
+        const win = coverWindow(photo.w, photo.h, size, size);
+        out.drawCoverRegion(photo, win.sx + (bx / size) * win.sw, win.sy + (by / size) * win.sh, (mp / size) * win.sw, (mp / size) * win.sh, bx, by, mp, mp);
+        out.blendRect(bx, by, mp, mp, darkModule ? dark : light, darkModule ? 0.6 : 0.5);
+        const L = centreLuma(out, bx + mp / 2, by + mp / 2);
+        if ((darkModule && L > 96) || (!darkModule && L < 160)) out.fillRect(bx, by, mp, mp, color);
         continue;
       }
 

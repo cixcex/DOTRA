@@ -36,7 +36,7 @@ export const ANIMATION_PRESETS: { id: AnimationPreset; label: string; hint: stri
   { id: 'pulse', label: 'Pulse', hint: 'Dots pop in outward from the centre' },
   { id: 'orbit', label: 'Orbit', hint: 'Dots spiral into place' },
   { id: 'reveal', label: 'Reveal', hint: 'Dots cascade top to bottom' },
-  { id: 'receipt', label: 'Receipt print', hint: 'QR feeds out of a slot like a billing machine' },
+  { id: 'receipt', label: 'Receipt printer', hint: 'Billing-machine style: the QR feeds out of a slot, top to bottom' },
 ];
 
 export const EC_LEVELS: { id: ECLevel; label: string; hint: string }[] = [
