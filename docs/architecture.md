@@ -30,9 +30,15 @@ keep the system testable, private and honest about scanability.
 | `engine/pngExporter.ts` | Canvas → PNG blob, download helper, safe filename derivation |
 | `engine/videoExporter.ts` | WebCodecs VideoEncoder + mp4-muxer (H.264/AV1/VP9 probe order); MediaRecorder WebM fallback with explicit note |
 | `engine/gifExporter.ts` | gifenc palette quantization → animated GIF |
+| `engines/raster.ts` | Engine Lab shared DOM-free raster core: `Raster`, painters, `drawCover`, box blur, crystalize (Delaunay), liquidify, perspective warp, seeded RNG — imported verbatim by browser and Node (zero mirror drift) |
+| `engines/halftoneEngine.ts` | Halftone engine — port of visual-qrcode (MIT): k×k sub-pixel modules, sacred B/W data centre, photo rings, solid function patterns, EC-H |
+| `engines/artisticEngine.ts` | Artistic engine — port of qrcode-toolkit (MIT): shaped modules, three-layer markers, seeded margin noise, crystalize / liquidify / perspective, photo backdrop |
+| `engines/compare.ts` | Engine-agnostic metrics on rendered rasters: band-wise photo fidelity (Pearson × gain), module separation, hue deviation, verified-gated score |
+| `engines/index.ts` | Engine registry + MIT attributions |
 | `workers/qrDecode.worker.ts` | Off-main-thread jsQR decode with transferable buffers and 4s timeout |
 | `hooks/useQRGenerator.ts` | Pipeline orchestration, debounce, repair ladder, per-resolution export verification |
 | `hooks/useParticleAnimation.ts` | rAF driver for the preview canvas; u≥1 delegates to the static renderer |
+| `hooks/useEngineLab.ts` | Engine Lab orchestration: shared matrix, per-engine render + repair ladders, jsQR gate, metrics, per-panel export |
 
 ## Pipeline data flow
 
@@ -118,6 +124,9 @@ performance-critical decision into DOM-free functions:
   ring geometry (zero mirror drift).
 - `scripts/test-engine.ts` then encodes → plans → rasterizes → jsQR-decodes in
   Node, exercising the same code paths the browser uses.
+- The Engine Lab sources (`src/engines/*`) are DOM-free by construction and are
+  bundled into the same harness — halftone, artistic and the comparison metrics
+  run in Node identically to the browser (T14).
 
 ## UI layout
 
@@ -129,6 +138,9 @@ performance-critical decision into DOM-free functions:
 - **Gallery** — 24 procedural samples; selection dispatches a window event that
   the studio consumes (single source of truth for "active sample").
 - **Test QR modal** — camera (`getUserMedia`, rAF decode loop) or upload decode.
+- **Engine Lab** — Studio tab: three engines render the same URL + photograph
+  side-by-side from one shared matrix; per-engine options, jsQR status, metric
+  bars, repair ladders, PNG export; attribution strip links both MIT origins.
 
 ## Failure honesty
 

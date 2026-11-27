@@ -17,6 +17,7 @@ import { Card, TextInput } from './primitives';
 import { QRPreview, type PreviewRenderOpts } from './QRPreview';
 import { VerificationBadge } from './VerificationBadge';
 import { ExportPanel } from './ExportPanel';
+import { EngineLab } from './EngineLab';
 import { ImageUploader, type LoadedSource } from './ImageUploader';
 import { GalleryPanel } from './GalleryPanel';
 import { CropEditor } from './CropEditor';
@@ -48,6 +49,7 @@ export function Studio() {
   const [qr, setQr] = useState<QROptions>(DEFAULT_QR);
   const [preset, setPreset] = useState<QualityPreset>('balanced');
   const [anim, setAnim] = useState<ParticleControls & { background: AnimationBackground }>(DEFAULT_ANIM);
+  const [view, setView] = useState<'composer' | 'lab'>('composer');
   const [playing, setPlaying] = useState(true);
   const [sampleLoaded, setSampleLoaded] = useState(false);
 
@@ -187,6 +189,33 @@ export function Studio() {
         </div>
       )}
 
+      {/* view tabs */}
+      <div className="flex items-center gap-1 rounded-full border border-line bg-white p-1 w-fit mb-5">
+        {(['composer', 'lab'] as const).map((v) => (
+          <button
+            key={v}
+            type="button"
+            onClick={() => setView(v)}
+            className={`rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${
+              view === v ? 'bg-ink text-paper' : 'text-mute hover:text-ink'
+            }`}
+          >
+            {v === 'composer' ? 'Composer' : 'Engine Lab'}
+          </button>
+        ))}
+      </div>
+
+      {view === 'lab' ? (
+        <EngineLab
+          urlInput={urlInput}
+          sourceImg={source?.img ?? null}
+          crop={crop}
+          adjustments={adjustments}
+          dots={dots}
+          qr={qr}
+          preset={preset}
+        />
+      ) : (
       <div className="grid gap-5 xl:grid-cols-[300px_minmax(0,1fr)_320px]">
         {/* ——— Left column ——— */}
         <div className="space-y-5">
@@ -302,6 +331,7 @@ export function Studio() {
           </Card>
         </div>
       </div>
+      )}
     </section>
   );
 }

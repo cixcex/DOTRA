@@ -27,6 +27,8 @@ import { PRESET_TONES, REPAIR_TONES } from '../src/utils/contrastOptimizer';
 import { createScene, scatterEnvelope, photoBlendT, structuralBlendT } from '../src/engine/particleEngine';
 import type { MatrixInfo, RGB, DotOptions, QualityPreset, ECLevel, TargetVersion, DotShape } from '../src/engine/types';
 import { makeImage, savePNG, fillRect, fillCircle, getPx, setPx, gradient, clamp255, makeNoise2D, forEachPixel, mixc, drawCover } from './pngkit.mjs';
+import { renderHalftone, renderArtistic, computeMetrics, Raster, HALFTONE_DEFAULTS, ARTISTIC_DEFAULTS } from '../src/engines';
+import type { HalftoneOptions, ArtisticOptions } from '../src/engines';
 
 type Img = ReturnType<typeof makeImage>;
 const luminance = (c: { r: number; g: number; b: number }) => 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
@@ -1067,6 +1069,181 @@ console.log('\n== T13: source dimensions & orientation (portrait / landscape / s
   const rect = makeArt('landscape', 800, 500);
   const sq = cropCenterSquare(rect);
   check('center crop yields a square (500×500)', sq.w === 500 && sq.h === 500);
+}
+
+console.log('\n== T14: Engine Lab — three engines, one decoder (spec §14) ==');
+{
+  const toRaster = (img: Img): Raster => new Raster(img.w, img.h, img.data);
+  const fromRaster = (r: Raster): Img => ({ w: r.w, h: r.h, data: r.data });
+  const Q = 6;
+  const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+
+  // ——— matrix sharing & EC semantics ———
+  const probeUrl = 'https://dotra.app/engine-lab';
+  const sharedM = encodeQR(probeUrl, 'M', 'auto').matrix;
+  const forcedH = encodeQR(probeUrl, 'H', 'auto').matrix;
+  check('shared matrix encoded at the Studio EC level', sharedM.ecLevel === 'M');
+  check('halftone re-encodes at EC-H (origin gem design)', forcedH.ecLevel === 'H');
+  check('same encoder → identical matrix size', sharedM.size === encodeQR(probeUrl, 'M', 'auto').matrix.size);
+
+  // ——— acceptance: 3 URLs × 3 artworks × 3 engines @1024px ———
+  const urls = [
+    'https://dotra.app',
+    'https://dotra.app/gallery/nature/ember-ridge',
+    'https://dotra.app/s/xK9f2mQp?src=sample&ref=qr&utm=dotra',
+  ];
+  const arts: Array<[string, Img]> = [
+    ['portrait', makeArt('portrait')],
+    ['landscape', makeArt('landscape')],
+    ['brightphoto', makeArt('brightphoto')],
+  ];
+  const results: Record<string, { ok: number; total: number; sep: number[]; fid: number[] }> = {
+    composite: { ok: 0, total: 0, sep: [], fid: [] },
+    halftone: { ok: 0, total: 0, sep: [], fid: [] },
+    artistic: { ok: 0, total: 0, sep: [], fid: [] },
+  };
+  const snapshot = (m: MatrixInfo) => {
+    const s: boolean[] = [];
+    for (let r = 0; r < 12; r++) for (let c = 0; c < 12; c++) s.push(m.isDark(r, c));
+    return s;
+  };
+  const before = snapshot(sharedM);
+
+  for (const url of urls) {
+    const mA = encodeQR(url, 'M', 'auto').matrix;
+    const mH = encodeQR(url, 'H', 'auto').matrix;
+    for (const [kind, art] of arts) {
+      const detail = upscale(cropCenterSquare(art), 1024);
+      const photo = toRaster(art);
+
+      { // composite — DOTRA v3 defaults
+        const { matrix, plan } = buildPlan(url, 'M', 'auto', art, DEFAULT_DOTS, 'balanced', 0);
+        const cq = Q;
+        const cmp = 1024 / (matrix.size + 2 * cq);
+        const cRect = { x: cq * cmp, y: cq * cmp, w: matrix.size * cmp, h: matrix.size * cmp };
+        const img = renderPlan(plan, matrix, { shape: 'pixel', dotSize: 0.88, spacing: 0.02, quietZone: Q, px: 1024, underlay: detail, ring: true });
+        if (decode(img) === url) {
+          results.composite.ok++;
+          const met = computeMetrics({ raster: toRaster(img), photo, photoRect: cRect, matrix, quietZone: Q, size: 1024, verified: true });
+          results.composite.sep.push(met.separation);
+          if (met.fidelity !== null) results.composite.fid.push(met.fidelity);
+        }
+        results.composite.total++;
+      }
+      { // halftone — visual-qrcode port
+        const raster = renderHalftone({ matrix: mH, photo, size: 1024, quietZone: Q }, HALFTONE_DEFAULTS);
+        const hp = Math.max(0, Math.min(HALFTONE_DEFAULTS.photoPadding, Math.floor(mH.size / 2) - 5));
+        const hmp = 1024 / (mH.size + 2 * Q);
+        const hRect = { x: Q * hmp + hp * hmp, y: Q * hmp + hp * hmp, w: (mH.size - 2 * hp) * hmp, h: (mH.size - 2 * hp) * hmp };
+        if (decode(fromRaster(raster)) === url) {
+          results.halftone.ok++;
+          const met = computeMetrics({ raster, photo, photoRect: hRect, matrix: mH, quietZone: Q, size: 1024, verified: true });
+          results.halftone.sep.push(met.separation);
+          if (met.fidelity !== null) results.halftone.fid.push(met.fidelity);
+        }
+        results.halftone.total++;
+      }
+      { // artistic — qrcode-toolkit port
+        const raster = renderArtistic({ matrix: mA, photo, size: 1024, quietZone: Q }, { ...ARTISTIC_DEFAULTS, photoBackground: true });
+        if (decode(fromRaster(raster)) === url) {
+          results.artistic.ok++;
+          const met = computeMetrics({ raster, photo, photoRect: { x: 0, y: 0, w: 1024, h: 1024 }, matrix: mA, quietZone: Q, size: 1024, verified: true });
+          results.artistic.sep.push(met.separation);
+          if (met.fidelity !== null) results.artistic.fid.push(met.fidelity);
+        }
+        results.artistic.total++;
+      }
+    }
+  }
+  check('matrix untouched by all three engines', before.every((v, i) => v === snapshot(sharedM)[i]));
+  for (const id of ['composite', 'halftone', 'artistic'] as const) {
+    const r = results[id];
+    check(`acceptance ${id}: exact URL match (${r.ok}/${r.total})`, r.ok === r.total, `(${r.ok}/${r.total})`);
+    console.log(`    ${id}: mean separation ${mean(r.sep).toFixed(1)} · mean fidelity ${r.fid.length ? mean(r.fid).toFixed(3) : '—'}`);
+  }
+  check('composite scan separation ≥ 100', mean(results.composite.sep) >= 100, mean(results.composite.sep).toFixed(1));
+  check('halftone scan separation ≥ 200', mean(results.halftone.sep) >= 200, mean(results.halftone.sep).toFixed(1));
+  check('artistic scan separation ≥ 200', mean(results.artistic.sep) >= 200, mean(results.artistic.sep).toFixed(1));
+  check('composite photo fidelity ≥ 0.20', mean(results.composite.fid) >= 0.2, mean(results.composite.fid).toFixed(3));
+  check('halftone photo fidelity ≥ 0.50', mean(results.halftone.fid) >= 0.5, mean(results.halftone.fid).toFixed(3));
+  check('artistic photo fidelity ≥ 0.03', mean(results.artistic.fid) >= 0.03, mean(results.artistic.fid).toFixed(3));
+
+  // ——— repair ladders: genuine escalation evidence ———
+  { // halftone hostile: busy photo, photo to grid edge, thumbnail-scale raster
+    // Centres are pure data colour by construction, so the genuine failure
+    // mode is a long URL (large matrix) at thumbnail scale — the 3×3 centre
+    // sub-pixel drops below reliable decoder resolution.
+    const url = 'https://dotra.app/s/engine-lab/compare?engine=halftone&photo=portrait&utm_source=gallery&utm_medium=qr';
+    const mH = encodeQR(url, 'H', 'auto').matrix;
+    const photo = toRaster(makeArt('saturated'));
+    const ladder: Array<{ label: string; opts: HalftoneOptions; photoOn: boolean }> = [
+      { label: '3×3 sub-pixels, photo to grid edge', opts: { subpixels: 3, photoPadding: 0 }, photoOn: true },
+      { label: '4×4 larger data centre', opts: { subpixels: 4, photoPadding: 0 }, photoOn: true },
+      { label: '4×4 + photo padding', opts: { subpixels: 4, photoPadding: 2 }, photoOn: true },
+      { label: 'solid modules (photo off)', opts: { subpixels: 4, photoPadding: 0 }, photoOn: false },
+    ];
+    let rescued = -1;
+    for (let i = 0; i < ladder.length; i++) {
+      const raster = renderHalftone({ matrix: mH, photo: ladder[i].photoOn ? photo : null, size: 192, quietZone: 2 }, ladder[i].opts);
+      const d = decode(fromRaster(raster));
+      console.log(`    halftone hostile rung ${i} [${ladder[i].label}]: ${d === url ? 'VERIFIED' : 'failed'}`);
+      if (d === url) { rescued = i; break; }
+    }
+    check('halftone hostile: defaults fail, ladder rescues', rescued > 0, `rescued at rung ${rescued}`);
+  }
+  { // artistic hostile: every effect at maximum
+    const url = urls[2];
+    const mA = encodeQR(url, 'M', 'auto').matrix;
+    const photo = toRaster(makeArt('saturated'));
+    const hostile: ArtisticOptions = {
+      ...ARTISTIC_DEFAULTS, crystalizeRadius: 32, liquidifyRadius: 16, perspective: 1,
+      marginNoise: true, marginNoiseRate: 0.6, marginNoiseSpace: 'full', seed: 7,
+    };
+    const ladder: Array<{ label: string; opts: ArtisticOptions }> = [
+      { label: 'all effects at maximum', opts: hostile },
+      { label: 'effects + margin noise off', opts: { ...hostile, crystalizeRadius: 0, liquidifyRadius: 0, perspective: 0, marginNoise: false } },
+      { label: 'plain square modules', opts: { ...hostile, pixelStyle: 'square', markerShape: 'square', markerInner: 'square', crystalizeRadius: 0, liquidifyRadius: 0, perspective: 0, marginNoise: false } },
+    ];
+    let rescued = -1;
+    for (let i = 0; i < ladder.length; i++) {
+      const raster = renderArtistic({ matrix: mA, photo, size: 1024, quietZone: Q }, ladder[i].opts);
+      const d = decode(fromRaster(raster));
+      console.log(`    artistic hostile rung ${i} [${ladder[i].label}]: ${d === url ? 'VERIFIED' : 'failed'}`);
+      if (d === url) { rescued = i; break; }
+    }
+    check('artistic hostile: defaults fail, effects-off rung verifies', rescued === 1, `rescued at rung ${rescued}`);
+  }
+
+  // ——— determinism ———
+  {
+    const mA = encodeQR(urls[0], 'M', 'auto').matrix;
+    const mH = encodeQR(urls[0], 'H', 'auto').matrix;
+    const photo = toRaster(makeArt('animal'));
+    const a1 = renderArtistic({ matrix: mA, photo, size: 512, quietZone: Q }, { ...ARTISTIC_DEFAULTS, crystalizeRadius: 12 });
+    const a2 = renderArtistic({ matrix: mA, photo, size: 512, quietZone: Q }, { ...ARTISTIC_DEFAULTS, crystalizeRadius: 12 });
+    check('artistic deterministic (same seed)', Buffer.compare(Buffer.from(a1.data), Buffer.from(a2.data)) === 0);
+    const b = renderArtistic({ matrix: mA, photo, size: 512, quietZone: Q }, { ...ARTISTIC_DEFAULTS, crystalizeRadius: 12, seed: 42 });
+    check('artistic seed changes the render', Buffer.compare(Buffer.from(a1.data), Buffer.from(b.data)) !== 0);
+    const h1 = renderHalftone({ matrix: mH, photo, size: 512, quietZone: Q }, HALFTONE_DEFAULTS);
+    const h2 = renderHalftone({ matrix: mH, photo, size: 512, quietZone: Q }, HALFTONE_DEFAULTS);
+    check('halftone deterministic', Buffer.compare(Buffer.from(h1.data), Buffer.from(h2.data)) === 0);
+  }
+
+  // ——— artifacts ———
+  {
+    const url = urls[1];
+    const art = makeArt('landscape');
+    const photo = toRaster(art);
+    const detail = upscale(cropCenterSquare(art), 1024);
+    const { matrix, plan } = buildPlan(url, 'M', 'auto', art, DEFAULT_DOTS, 'balanced', 0);
+    const cImg = renderPlan(plan, matrix, { shape: 'pixel', dotSize: 0.88, spacing: 0.02, quietZone: Q, px: 1024, underlay: detail, ring: true });
+    savePNG('/tmp/dotra-v3/engine-composite.png', cImg.w, cImg.h, cImg.data);
+    const hImg = fromRaster(renderHalftone({ matrix: encodeQR(url, 'H', 'auto').matrix, photo, size: 1024, quietZone: Q }, HALFTONE_DEFAULTS));
+    savePNG('/tmp/dotra-v3/engine-halftone.png', hImg.w, hImg.h, hImg.data);
+    const aImg = fromRaster(renderArtistic({ matrix: encodeQR(url, 'M', 'auto').matrix, photo, size: 1024, quietZone: Q }, { ...ARTISTIC_DEFAULTS, photoBackground: true }));
+    savePNG('/tmp/dotra-v3/engine-artistic.png', aImg.w, aImg.h, aImg.data);
+    console.log('    artifacts: /tmp/dotra-v3/engine-{composite,halftone,artistic}.png');
+  }
 }
 
 console.log(`\n=========== ${passed} passed, ${failed} failed ===========`);

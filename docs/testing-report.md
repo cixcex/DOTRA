@@ -3,7 +3,7 @@
 Everything below was executed against the code in this repository. Engine results
 are reproducible with `npm run test:engine`.
 
-## 1. Node engine harness — 159 / 159 passed
+## 1. Node engine harness — 177 / 177 passed
 
 `scripts/test-engine.ts` runs the *same* DOM-free planning logic the browser uses
 (`buildDotPlanFromSamples`), rasterizes the full v3 photographic composite with
@@ -11,7 +11,9 @@ a geometry-identical PNG renderer (`scripts/pngkit.mjs`, including the exported
 `ringSquares()` ring geometry — zero mirror drift), and decodes the actual pixels
 with jsQR. The v3 harness adds the composite acceptance matrix, influence /
 colour / ring control matrices, hostile-composite repair escalation, pixel-level
-underlay and ring evidence, and source-orientation coverage.
+underlay and ring evidence, and source-orientation coverage. The v4 harness adds
+the Engine Lab acceptance matrix (T14): three engines on a shared matrix,
+band-wise fidelity metrics, hostile ladder escalation, determinism.
 
 | Group | Coverage | Result |
 | --- | --- | --- |
@@ -28,14 +30,15 @@ underlay and ring evidence, and source-orientation coverage.
 | T11 Animation timeline | scatter envelope 0→1→0, single-peaked, bounded; photo→QR and structural blends monotone 0→1; structural materializes after data colour shift; real `createScene`: all 2,401 modules carry their raw photo colour (structural included), scatter-return completes by u = 0.86, particle count = dots + structural; ring geometry (4(N+q) squares on the frame centreline, ≥ 1.3-module clearance); underlay pixel evidence (dropped light modules and hairline gaps show the photograph; dark module centres stay dark) | ✓ |
 | T12 Composite acceptance (spec §12) | 3 URLs × 6 photo categories × 2 rasters (1024/512 px) decode with exact URL match (36/36); module style × influence 15/15; influence × colour treatment × ring 12/12; hostile composite fails at defaults and is rescued by the ladder; final-frame determinism (export == preview pixels); ring / underlay / alignment pixel probes | ✓ |
 | T13 Source dimensions & orientation | portrait 500×800, landscape 800×500, square 512×512 sources via center crop; 1024 px rasters decode exactly (9/9); non-square sources never distort the matrix | ✓ |
+| T14 Engine Lab (spec §14) | shared matrix across engines; halftone re-encodes at EC-H; 3 URLs × 3 artworks × 3 engines at 1024 px decode with exact URL match (27/27); metrics — separation 205.4 / 255.0 / 245.0, band-wise fidelity 0.315 / 0.878 / 0.058 (composite / halftone / artistic — the designs honestly differ); halftone hostile (long URL, 192 px thumbnail) fails at 3×3 defaults and is rescued by the 4×4-centre rung; artistic hostile (all effects maximum) fails and is rescued with effects off; determinism (same seed identical, new seed differs); matrix immutability; engine artifacts saved | ✓ 27/27 + ladders |
 
-**Final: 159 passed, 0 failed.**
+**Final: 177 passed, 0 failed.**
 
 Recognizability note: the harness cannot *see* images. Its fidelity metrics are
 the honest programmatic proxies — per-band luma correlation (the photo's tonal
 structure survives inside each band), hue preservation (Δhue ≈ 2°), chroma
 retention, and the shuffled-control spatial check. The rendered PNGs are saved
-to `/tmp/dotra-v3/` for human review.
+to `/tmp/dotra-v3/` for human review (Engine Lab panels: `engine-{composite,halftone,artistic}.png`).
 
 ## 2. Tone calibration (empirical, jsQR)
 

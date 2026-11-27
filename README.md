@@ -35,6 +35,7 @@ with jsQR at generation time — the same gate every export passes.*
 - [Quick start](#quick-start)
 - [How it works](#how-it-works)
 - [The repair ladder](#the-repair-ladder)
+- [Engine Lab](#engine-lab)
 - [Exports](#exports)
 - [Testing](#testing)
 - [Documentation](#documentation)
@@ -74,6 +75,7 @@ analytics on your content.
 | **Three export formats** | PNG (1024/2048/4096 px), MP4 at 1080p30 (WebCodecs + mp4-muxer, explicit WebM fallback), GIF at 480 px. Each export re-verifies at its own resolution. |
 | **24 sample artworks** | Procedurally generated, deterministic, license-free, bundled offline. |
 | **Built-in QR tester** | Scan any QR with your camera or upload a photo and decode it locally. |
+| **Engine Lab** | Three rendering engines — the DOTRA composite, a halftone port of visual-qrcode, and an artistic port of qrcode-toolkit (both MIT) — render the same URL + photograph side-by-side with jsQR verification, fidelity / separation / hue metrics, per-engine repair ladders, and export of any verified panel or the best-scoring one. |
 
 ## The verification guarantee
 
@@ -114,7 +116,7 @@ npm run preview      # serve the production build
 | `npm run build` | `tsc --noEmit` + production build to `dist/` |
 | `npm run preview` | Serve the production build locally |
 | `npm run typecheck` | TypeScript check only |
-| `npm run test:engine` | Node engine harness — **159 assertions, 0 failures** |
+| `npm run test:engine` | Node engine harness — **177 assertions, 0 failures** |
 | `npm run gen:assets` | Regenerate favicons + OG cover (with a jsQR-verified photographic composite QR) |
 | `npm run gen:samples` | Regenerate the 24 procedural sample artworks |
 
@@ -140,6 +142,28 @@ URL ─▶ normalize & validate ─▶ encode QR matrix (qrcode-generator)
 | 3 | + Full-size square modules | size → 100%, spacing → 0, shape → square; influence → 0.1 |
 | 4 | + Perforation ring off | decorative ring disabled; influence → 0.05, repair-3 bands |
 | 5 | Maximum redundancy | as above + matrix re-encoded at EC level H; influence → 0 |
+
+## Engine Lab
+
+DOTRA ships **three rendering engines behind one decoder contract**. The Engine
+Lab (Studio → Engine Lab tab) renders the *same URL and the same photograph*
+through all three, side by side:
+
+| Engine | Origin | Look |
+| --- | --- | --- |
+| **Composite** | DOTRA v3 (this repo) | Full-bleed photograph beneath a dense grid of tiny B&W square modules; hairline gaps show raw photo |
+| **Halftone** | Port of [visual-qrcode](https://github.com/JeSuisUnCaillou/visual-qrcode) (MIT) | Each module = 3×3 or 4×4 sub-pixels; the sacred centre carries the data in pure B/W, the ring sub-pixels show the photograph |
+| **Artistic** | Port of the deterministic toolkit of [artistic-qrcode-generator](https://github.com/duanxianpi/artistic-qrcode-generator) (MIT) | Shaped modules, three-layer markers, seeded margin noise, crystalize / liquidify / perspective effects, optional photo backdrop |
+
+Every panel has its own options, its own jsQR verification gate and its own
+repair ladder — and all three are measured with the same metrics: **photo
+fidelity** (per polarity band, gain-weighted), **module separation**, **hue
+deviation**. A panel's score is zero until jsQR decodes its actual raster back
+to your URL, so an unverified render can never win the comparison. Export any
+verified panel, or the best-scoring one. The SD+ControlNet pipeline of the
+artistic origin is GPU-bound and deliberately not ported — everything DOTRA
+ships is deterministic and 100% client-side. Full design notes, port fidelity
+and attributions: [docs/engines.md](docs/engines.md).
 
 ## Exports
 
@@ -172,13 +196,20 @@ the browser uses and rasterizes with geometry-identical math, then decodes with 
   squares are black with white clearance
 - Animation timeline math + real scene builder; portrait/landscape/square sources
   via center crop; final-frame determinism (export == preview pixels)
+- Engine Lab acceptance (T14): 3 URLs × 3 artworks × 3 engines at 1024 px decode
+  with exact URL match (27/27); shared matrix across engines; halftone re-encodes
+  at EC-H; band-wise fidelity 0.315 / 0.878 / 0.058 and separation 205 / 255 / 245
+  match the three designs; hostile ladders escalate and rescue (halftone at
+  thumbnail scale, artistic at maximum effects); determinism and matrix
+  immutability asserted
 
-**Result: 159 passed, 0 failed.** Full detail in [docs/testing-report.md](docs/testing-report.md).
+**Result: 177 passed, 0 failed.** Full detail in [docs/testing-report.md](docs/testing-report.md).
 
 ## Documentation
 
 - [docs/architecture.md](docs/architecture.md) — module map, pipeline data flow, geometry, workers, Node testability design
 - [docs/qr-engine.md](docs/qr-engine.md) — matrix generation, the function-module mask, tone mapping, the jsQR calibration findings, verification contract
+- [docs/engines.md](docs/engines.md) — the Engine Lab: three engines (composite, halftone port, artistic port), shared raster core, comparison metrics, repair ladders, MIT attributions
 - [docs/testing-report.md](docs/testing-report.md) — harness coverage, tone-calibration experiments, browser-side gate, manual QA checklist
 
 ## Project structure
@@ -187,20 +218,21 @@ the browser uses and rasterizes with geometry-identical math, then decodes with 
 ├── index.html
 ├── public/                  # favicons + OG cover (a real verified DOTRA output)
 ├── scripts/                 # Node tooling: engine tests, asset/sample generators
-│   ├── test-engine.ts       #   159-assertion harness (Node, no DOM)
+│   ├── test-engine.ts       #   177-assertion harness (Node, no DOM)
 │   ├── generate-assets.ts   #   favicons + OG cover
 │   ├── generate-samples.mjs #   24 procedural sample artworks
 │   ├── pngkit.mjs           #   dependency-free PNG codec for Node
 │   └── bundle-run.mjs       #   esbuild loader for the TS tooling
 ├── src/
 │   ├── engine/              # QR, image, dots, particles, verification, exporters
+│   ├── engines/             # Engine Lab: shared DOM-free raster core, halftone + artistic ports, metrics, registry
 │   ├── workers/             # jsQR decode worker (transferable buffers)
-│   ├── hooks/               # useQRGenerator (pipeline + repair), useParticleAnimation
-│   ├── components/          # Hero, Studio, panels, exporters, Test QR modal…
+│   ├── hooks/               # useQRGenerator (pipeline + repair), useEngineLab, useParticleAnimation
+│   ├── components/          # Hero, Studio, EngineLab, panels, exporters, Test QR modal…
 │   ├── lib/                 # constants, sample registry
 │   ├── utils/               # colour, contrast, URL, image helpers
 │   └── assets/samples/      # 24 bundled sample artworks
-└── docs/                    # architecture, QR engine, testing report
+└── docs/                    # architecture, QR engine, engines, testing report
 ```
 
 ## Deployment
