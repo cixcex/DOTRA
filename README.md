@@ -116,7 +116,7 @@ npm run preview      # serve the production build
 | `npm run build` | `tsc --noEmit` + production build to `dist/` |
 | `npm run preview` | Serve the production build locally |
 | `npm run typecheck` | TypeScript check only |
-| `npm run test:engine` | Node engine harness — **177 assertions, 0 failures** |
+| `npm run test:engine` | Node engine harness — **181 assertions, 0 failures** |
 | `npm run gen:assets` | Regenerate favicons + OG cover (with a jsQR-verified photographic composite QR) |
 | `npm run gen:samples` | Regenerate the 24 procedural sample artworks |
 
@@ -200,8 +200,11 @@ the browser uses and rasterizes with geometry-identical math, then decodes with 
   with exact URL match (27/27); shared matrix across engines; halftone re-encodes
   at EC-H; band-wise fidelity 0.315 / 0.878 / 0.058 and separation 205 / 255 / 245
   match the three designs; hostile ladders escalate and rescue (halftone at
-  thumbnail scale, artistic at maximum effects); determinism and matrix
-  immutability asserted
+  thumbnail scale, artistic at maximum effects); artistic ladder completeness at
+  preview size — busy-photo styled defaults fail honestly and the
+  photograph-background-off rung rescues, a 20-configuration option sweep always
+  verifies, and the diamond finder-core rendering bug is regression-probed;
+  determinism and matrix immutability asserted
 
 **Result: 177 passed, 0 failed.** Full detail in [docs/testing-report.md](docs/testing-report.md).
 
@@ -218,7 +221,7 @@ the browser uses and rasterizes with geometry-identical math, then decodes with 
 ├── index.html
 ├── public/                  # favicons + OG cover (a real verified DOTRA output)
 ├── scripts/                 # Node tooling: engine tests, asset/sample generators
-│   ├── test-engine.ts       #   177-assertion harness (Node, no DOM)
+│   ├── test-engine.ts       #   181-assertion harness (Node, no DOM)
 │   ├── generate-assets.ts   #   favicons + OG cover
 │   ├── generate-samples.mjs #   24 procedural sample artworks
 │   ├── pngkit.mjs           #   dependency-free PNG codec for Node

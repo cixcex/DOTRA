@@ -1214,6 +1214,73 @@ console.log('\n== T14: Engine Lab — three engines, one decoder (spec §14) =='
     check('artistic hostile: defaults fail, effects-off rung verifies', rescued === 1, `rescued at rung ${rescued}`);
   }
 
+  // ——— artistic ladder completeness — UI preview size (720px), Studio-default EC-H ———
+  // Mirrors the hook's 6-rung artistic ladder exactly (styling → effects/noise off →
+  // square finders → plain modules → safe palette → photo background off).
+  {
+    const url = 'https://dotra.app/s/engine-lab/artistic/compare?engine=artistic&photo=busy&utm_source=stress&utm_medium=qr&utm_campaign=lab';
+    const mA = encodeQR(url, 'H', 'auto').matrix;
+    const busy = toRaster(makeArt('animal')); // high-frequency stripes — the hostile case
+    const safe = (a: ArtisticOptions): ArtisticOptions => ({ ...a, crystalizeRadius: 0, liquidifyRadius: 0, perspective: 0, marginNoise: false });
+    const ladderFrom = (a: ArtisticOptions): ArtisticOptions[] => [
+      a,
+      safe(a),
+      { ...safe(a), markerShape: 'square', markerInner: 'square' },
+      { ...safe(a), pixelStyle: 'square', markerShape: 'square', markerInner: 'square' },
+      { ...safe(a), pixelStyle: 'square', markerShape: 'square', markerInner: 'square', lightColor: '#ffffff', darkColor: '#0a0a0a' },
+      { ...safe(a), pixelStyle: 'square', markerShape: 'square', markerInner: 'square', lightColor: '#ffffff', darkColor: '#0a0a0a', photoBackground: false },
+    ];
+    const verifyLadder = (opts: ArtisticOptions): number => {
+      const rungs = ladderFrom(opts);
+      for (let i = 0; i < rungs.length; i++) {
+        const raster = renderArtistic({ matrix: mA, photo: busy, size: 720, quietZone: 6 }, rungs[i]);
+        if (decode(fromRaster(raster)) === url) return i;
+      }
+      return -1;
+    };
+    // (a) busy photo + long URL at preview size: styled defaults fail, photo-off rung rescues
+    const r0 = renderArtistic({ matrix: mA, photo: busy, size: 720, quietZone: 6 }, ARTISTIC_DEFAULTS);
+    check('artistic @720px busy photo: defaults genuinely fail jsQR', decode(fromRaster(r0)) !== url);
+    const rescueRung = verifyLadder(ARTISTIC_DEFAULTS);
+    check('artistic @720px busy photo: ladder rescues (photo background off)', rescueRung === 5, `rescued at rung ${rescueRung}`);
+    // (b) every styled option verifies at SOME rung — no configuration is undecodable
+    const sweep: Array<[string, Partial<ArtisticOptions>]> = [
+      ['markerInner diamond', { markerInner: 'diamond' }],
+      ['markerInner circle', { markerInner: 'circle' }],
+      ['markerInner plus', { markerInner: 'plus' }],
+      ['markerShape circle', { markerShape: 'circle' }],
+      ['markerShape plus', { markerShape: 'plus' }],
+      ['markerShape octagon', { markerShape: 'octagon' }],
+      ['markerShape tiny-plus', { markerShape: 'tiny-plus' }],
+      ['style rounded', { pixelStyle: 'rounded' }],
+      ['style dot', { pixelStyle: 'dot' }],
+      ['style squircle', { pixelStyle: 'squircle' }],
+      ['style row', { pixelStyle: 'row' }],
+      ['style column', { pixelStyle: 'column' }],
+      ['noise full', { marginNoiseSpace: 'full' }],
+      ['noise marker', { marginNoiseSpace: 'marker' }],
+      ['crystalize', { crystalizeRadius: 8 }],
+      ['liquidify', { liquidifyRadius: 10 }],
+      ['perspective', { perspective: 0.5 }],
+      ['colors inverted', { lightColor: '#0a0a0a', darkColor: '#f5f5f4' }],
+      ['colors pastel', { lightColor: '#e8e8e6', darkColor: '#6b6b6b' }],
+      ['photo background off', { photoBackground: false }],
+    ];
+    let sweepOk = 0;
+    let worst = 0;
+    for (const [, over] of sweep) {
+      const r = verifyLadder({ ...ARTISTIC_DEFAULTS, ...over });
+      if (r >= 0) { sweepOk++; worst = Math.max(worst, r); }
+    }
+    check(`artistic option sweep: all ${sweep.length} styled configs verify at some rung`, sweepOk === sweep.length, `${sweepOk}/${sweep.length}`);
+    console.log(`    artistic sweep: ${sweepOk}/${sweep.length} verified, worst rescue rung ${worst}`);
+    // (c) diamond finder core actually renders dark (regression probe — drawShape diamond)
+    const dR = renderArtistic({ matrix: mA, photo: busy, size: 720, quietZone: 6 }, { ...ARTISTIC_DEFAULTS, markerInner: 'diamond' });
+    const dmp = 720 / (mA.size + 12);
+    const coreLuma = dR.luma(Math.round(9.5 * dmp), Math.round(9.5 * dmp));
+    check('artistic diamond marker core renders dark (bug fix)', coreLuma < 100, `core luma ${coreLuma.toFixed(0)}`);
+  }
+
   // ——— determinism ———
   {
     const mA = encodeQR(urls[0], 'M', 'auto').matrix;

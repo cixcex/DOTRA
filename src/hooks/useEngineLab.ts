@@ -209,10 +209,14 @@ export function useEngineLab() {
         const rung = ladder[li];
         if (!alive()) return;
         patch('halftone', { attempts: ladder.slice(0, li + 1).map((l) => l.label) });
-        const raster = renderHalftone(
-          { matrix: matrixH, photo: rung.photo ? photoRaster : null, size: PREVIEW_PX, quietZone: args.qr.quietZone },
-          rung.opts,
-        );
+        let raster: Raster | null = null;
+        try {
+          raster = renderHalftone(
+            { matrix: matrixH, photo: rung.photo ? photoRaster : null, size: PREVIEW_PX, quietZone: args.qr.quietZone },
+            rung.opts,
+          );
+        } catch { raster = null; }
+        if (!raster) continue;
         const canvas = rasterToCanvas(raster);
         const outcome = await verifyCanvas(canvas, url);
         if (!alive()) return;
@@ -240,17 +244,24 @@ export function useEngineLab() {
       const ladder: { label: string; opts: ArtisticOptions }[] = [
         { label: 'toolkit styling', opts: args.artistic },
         { label: 'effects + margin noise off', opts: { ...args.artistic, crystalizeRadius: 0, liquidifyRadius: 0, perspective: 0, marginNoise: false } },
+        { label: 'square finder markers', opts: { ...args.artistic, crystalizeRadius: 0, liquidifyRadius: 0, perspective: 0, marginNoise: false, markerShape: 'square', markerInner: 'square' } },
         { label: 'plain square modules', opts: { ...args.artistic, crystalizeRadius: 0, liquidifyRadius: 0, perspective: 0, marginNoise: false, pixelStyle: 'square', markerShape: 'square', markerInner: 'square' } },
+        { label: 'default black & white palette', opts: { ...args.artistic, crystalizeRadius: 0, liquidifyRadius: 0, perspective: 0, marginNoise: false, pixelStyle: 'square', markerShape: 'square', markerInner: 'square', lightColor: '#ffffff', darkColor: '#0a0a0a' } },
+        { label: 'photograph background off', opts: { ...args.artistic, crystalizeRadius: 0, liquidifyRadius: 0, perspective: 0, marginNoise: false, pixelStyle: 'square', markerShape: 'square', markerInner: 'square', lightColor: '#ffffff', darkColor: '#0a0a0a', photoBackground: false } },
       ];
       let done = false;
       for (let li = 0; li < ladder.length && !done; li++) {
         const rung = ladder[li];
         if (!alive()) return;
         patch('artistic', { attempts: ladder.slice(0, li + 1).map((l) => l.label) });
-        const raster = renderArtistic(
-          { matrix, photo: photoRaster, size: PREVIEW_PX, quietZone: args.qr.quietZone },
-          rung.opts,
-        );
+        let raster: Raster | null = null;
+        try {
+          raster = renderArtistic(
+            { matrix, photo: photoRaster, size: PREVIEW_PX, quietZone: args.qr.quietZone },
+            rung.opts,
+          );
+        } catch { raster = null; }
+        if (!raster) continue;
         const canvas = rasterToCanvas(raster);
         const outcome = await verifyCanvas(canvas, url);
         if (!alive()) return;

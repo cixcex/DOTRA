@@ -198,6 +198,9 @@ function drawShape(out: Raster, x: number, y: number, s: number, shape: Shape, c
     case 'tiny-plus':
       out.fillPoly(plusPoly(x + s * 0.15, y + s * 0.15, s * 0.7, 0.28, 0.72), color);
       break;
+    case 'diamond':
+      out.fillPoly(diamondPoly(x, y, s), color);
+      break;
   }
 }
 
@@ -218,6 +221,11 @@ function plusPoly(x: number, y: number, s: number, a: number, b: number): [numbe
     [x + s, y + b * s], [x + b * s, y + b * s], [x + b * s, y + s], [x + a * s, y + s],
     [x + a * s, y + b * s], [x, y + b * s], [x, y + a * s], [x + a * s, y + a * s],
   ];
+}
+
+/** Inscribed diamond — keeps the finder core dark across the centre cross-scanlines. */
+function diamondPoly(x: number, y: number, s: number): [number, number][] {
+  return [[x + s / 2, y], [x + s, y + s / 2], [x + s / 2, y + s], [x, y + s / 2]];
 }
 
 function octagonPoly(cx: number, cy: number, rad: number): [number, number][] {

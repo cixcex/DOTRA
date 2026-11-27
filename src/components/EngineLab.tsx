@@ -330,6 +330,12 @@ export function EngineLab({ urlInput, sourceImg, crop, adjustments, dots, qr, pr
                       onChange={(v) => setArtistic((a) => ({ ...a, seed: v }))}
                       format={(v) => `#${v}`}
                     />
+                    <p className="text-[11px] text-mute leading-relaxed">
+                      Styling is bounded by scanability: if a configuration can't be decoded
+                      by jsQR, the ladder simplifies it step by step — effects off, square
+                      finder markers, plain modules, safe palette, and finally a clean white
+                      frame. The attempts list shows exactly which rung verified.
+                    </p>
                   </div>
                 )}
 

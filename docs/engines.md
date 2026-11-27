@@ -90,6 +90,28 @@ module fills are disabled — DOTRA never lets module polarity drift for
 aesthetics); the quiet zone stays clean white except for the seeded margin
 noise; every render passes through the same jsQR gate.
 
+**Scan-safety findings (measured with jsQR, T14).** Which styling survives the
+gate is empirical, not aesthetic:
+
+- **Module styles all survive** — square, rounded, dot, squircle, row and
+  column stripes verify at rung 0: the module centre stays dark, which is what
+  jsQR samples.
+- **Finder markers are the fragile part.** Square and hollow-box markers verify
+  everywhere; circle is marginal; octagon and plus/tiny-plus outer shapes are
+  rejected. A diamond, circle or plus *core* leaves light corners inside the
+  3×3 finder core and is rejected even at 1024 px on a white frame — the ladder
+  flattens markers to square at rung 2. (The diamond core now *renders* correctly;
+  it simply cannot carry the finder pattern jsQR looks for.)
+- **Effects and full-quiet-zone noise** (crystalize, liquidify, perspective,
+  `marginNoiseSpace: 'full'`) escalate to rung 1.
+- **Custom palettes** — inverted or low-contrast light/dark colours — escalate
+  to rung 4, which resets to the default B/W palette.
+- **Busy or dark photograph backgrounds** defeat jsQR's finder search at preview
+  size for large matrices; the final rung drops the photo background.
+- The completeness property is asserted in the harness: a 20-configuration
+  option sweep plus the busy-photo case — **every artistic configuration verifies
+  at some rung**; no styled render is ever silently undecodable.
+
 ## Comparison metrics (`src/engines/compare.ts`)
 
 All metrics are computed on the **rendered raster**, not internal state:
@@ -118,14 +140,17 @@ All metrics are computed on the **rendered raster**, not internal state:
 Every engine escalates rendering parameters only — the matrix and the URL are
 never touched:
 
-| Engine | Rung 0 | Rung 1 | Rung 2 | Rung 3 |
-| --- | --- | --- | --- | --- |
-| Composite | Studio defaults | influence ↓ 0.35 | influence 0.2 + strict B&W | full-size square modules → ring off → EC-H + influence 0 (six rungs total, see [qr-engine.md](qr-engine.md)) |
-| Halftone | 3×3 sub-pixels, photo to grid edge | 4×4 centre | + photo padding | solid data modules |
-| Artistic | all styles/effects on | effects off (markers stay) | dot style, noise off | solid square modules |
+| Engine | Rung 0 | Rung 1 | Rung 2 | Rung 3 | Rung 4 | Rung 5 |
+| --- | --- | --- | --- | --- | --- | --- |
+| Composite | Studio defaults | influence ↓ 0.35 | influence 0.2 + strict B&W | full-size square modules | ring off | EC-H + influence 0 |
+| Halftone | 3×3 sub-pixels, photo to grid edge | 4×4 centre | + photo padding | solid data modules | — | — |
+| Artistic | toolkit styling (user options) | effects + margin noise off | square finder markers | plain square modules | default B&W palette | photograph background off |
 
 Each rung re-renders and re-verifies the actual pixels; the UI replays the
-exact rung that verified.
+exact rung that verified. The artistic ladder was calibrated against jsQR at
+the 720 px preview size (T14): styled defaults fail on busy photographs and
+large matrices, and the final rung — dropping the photograph background for a
+clean white frame — is the same escape hatch the halftone engine uses.
 
 ## Attribution & licenses
 
